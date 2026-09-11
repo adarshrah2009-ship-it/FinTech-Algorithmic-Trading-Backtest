@@ -2,7 +2,9 @@ streamlit
 yfinance
 pandas
 numpy
-matplotlib
-curl_cffi
 plotly
-fpdf2
+scipy
+requests
+statsmodels
+matplotlib
+seaborn
