@@ -136,7 +136,7 @@ else:
     # 8. Monte Carlo Simulation Engine
     st.markdown("### 🎲 Monte Carlo Risk Simulation (100-Day Forward Projection)")
     st.write(
-        "Simulating 200 random forward price trajectories based on historical daily volatility ($\mu, \sigma$)."
+        "Simulating 200 random forward price trajectories based on historical daily volatility."
     )
 
     returns = df_clean["Daily_Return"]
