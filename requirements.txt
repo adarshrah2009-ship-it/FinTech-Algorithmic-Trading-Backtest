@@ -4,3 +4,5 @@ pandas
 numpy
 matplotlib
 curl_cffi
+plotly
+fpdf2
