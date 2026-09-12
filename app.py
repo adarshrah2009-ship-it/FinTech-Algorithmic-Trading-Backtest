@@ -3,7 +3,6 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import requests
-import scipy.optimize as sco
 import streamlit as st
 import yfinance as yf
 
@@ -21,6 +20,16 @@ st.write(
     "Multi-asset quantitative suite featuring technical crossovers, GARCH volatility, Markowitz portfolio optimization, macro factor attribution, and automated trade alerts."
 )
 
+# Predefined asset lists for scrollable dropdown menus
+ASSET_OPTIONS = [
+    "RELIANCE.NS", "TCS.NS", "INFY.NS", "HDFCBANK.NS", "TATAMOTORS.NS",
+    "BTC-USD", "ETH-USD", "GC=F", "^GSPC", "^NSEI", "AAPL", "NVDA", "TSLA"
+]
+
+BENCHMARK_OPTIONS = [
+    "^GSPC", "^NSEI", "^BSESN", "^IXIC", "DX-Y.NYB", "GC=F"
+]
+
 # ---------------------------------------------------------
 # 2. NAVIGATION TABS
 # ---------------------------------------------------------
@@ -36,7 +45,7 @@ tab1, tab2, tab3, tab4 = st.tabs([
 # ---------------------------------------------------------
 with tab1:
     st.sidebar.header("🕹️ Strategy Parameters")
-    ticker = st.sidebar.text_input("Stock Ticker", value="RELIANCE.NS").strip()
+    ticker = st.sidebar.selectbox("Select Asset Ticker", options=ASSET_OPTIONS, index=0)
     time_period = st.sidebar.selectbox("Horizon", options=["1y", "2y", "3y", "5y"], index=2)
     fast_ma = st.sidebar.slider("Fast Moving Average (Days)", 10, 50, 50)
     slow_ma = st.sidebar.slider("Slow Moving Average (Days)", 100, 200, 200)
@@ -86,16 +95,12 @@ with tab1:
             else 0
         )
 
-        peak = df_clean["Strategy_Equity"].cummax()
-        drawdown = (df_clean["Strategy_Equity"] - peak) / peak
-        max_drawdown = drawdown.min() * 100
-
         # Tail Risk (VaR & CVaR)
         confidence_level = 0.95
         var_95 = np.percentile(df_clean["Daily_Return"], (1 - confidence_level) * 100)
         cvar_95 = df_clean["Daily_Return"][df_clean["Daily_Return"] <= var_95].mean()
 
-        # Dynamic Volatility Proxy (EWMA / Dynamic GARCH-like bands)
+        # Dynamic EWMA Volatility
         lambda_param = 0.94
         returns_sq = df_clean["Daily_Return"] ** 2
         ewma_vol = np.zeros(len(returns_sq))
@@ -144,14 +149,14 @@ with tab1:
 # ---------------------------------------------------------
 with tab2:
     st.markdown("### 🎯 Markowitz Portfolio Optimization Engine")
-    st.write("Calculate optimal asset weights to maximize the Sharpe Ratio or minimize portfolio variance.")
+    st.write("Calculate optimal asset weights to maximize the Sharpe Ratio or minimize portfolio variance via Monte Carlo simulation.")
 
     default_assets = "BTC-USD, GC=F, RELIANCE.NS, TCS.NS, ^GSPC"
     user_assets = st.text_input("Portfolio Asset Tickers (comma-separated)", value=default_assets)
     asset_list = [a.strip() for a in user_assets.split(",") if a.strip()]
 
     if len(asset_list) >= 2:
-        with st.spinner("Computing Markowitz Efficient Frontier..."):
+        with st.spinner("Computing Monte Carlo Efficient Frontier..."):
             port_prices = yf.download(asset_list, period=time_period)["Close"]
             if isinstance(port_prices.columns, pd.MultiIndex):
                 port_prices.columns = [col[1] for col in port_prices.columns]
@@ -161,38 +166,30 @@ with tab2:
             cov_matrix = port_returns.cov() * 252
             num_assets = len(asset_list)
 
-            # Optimization Functions
-            def portfolio_performance(weights):
-                returns = np.sum(mean_returns * weights)
-                std = np.sqrt(np.dot(weights.T, np.dot(cov_matrix, weights)))
-                return returns, std
+            # Pure NumPy Monte Carlo Optimization
+            num_simulations = 5000
+            weights_record = np.zeros((num_simulations, num_assets))
+            results = np.zeros((3, num_simulations))
 
-            def negative_sharpe(weights):
-                p_ret, p_std = portfolio_performance(weights)
-                return -(p_ret - 0.06) / p_std
-
-            constraints = ({'type': 'eq', 'fun': lambda x: np.sum(x) - 1})
-            bounds = tuple((0, 1) for _ in range(num_assets))
-            init_guess = num_assets * [1.0 / num_assets]
-
-            opt_results = sco.minimize(negative_sharpe, init_guess, method='SLSQP', bounds=bounds, constraints=constraints)
-            opt_weights = opt_results.x
-
-            opt_ret, opt_std = portfolio_performance(opt_weights)
-            opt_sharpe = (opt_ret - 0.06) / opt_std
-
-            # Simulation for Efficient Frontier Visual
-            num_portfolios = 1000
-            results = np.zeros((3, num_portfolios))
-            for i in range(num_portfolios):
-                weights = np.random.random(num_assets)
-                weights /= np.sum(weights)
-                p_ret, p_std = portfolio_performance(weights)
+            for i in range(num_simulations):
+                w = np.random.random(num_assets)
+                w /= np.sum(w)
+                weights_record[i, :] = w
+                
+                p_ret = np.sum(mean_returns * w)
+                p_std = np.sqrt(np.dot(w.T, np.dot(cov_matrix, w)))
+                p_sharpe = (p_ret - 0.06) / p_std if p_std != 0 else 0
+                
                 results[0, i] = p_std
                 results[1, i] = p_ret
-                results[2, i] = (p_ret - 0.06) / p_std
+                results[2, i] = p_sharpe
 
-            # Display Optimal Allocation
+            max_sharpe_idx = np.argmax(results[2])
+            opt_weights = weights_record[max_sharpe_idx, :]
+            opt_ret = results[1, max_sharpe_idx]
+            opt_std = results[0, max_sharpe_idx]
+            opt_sharpe = results[2, max_sharpe_idx]
+
             st.markdown("#### 🏆 Optimal Maximum Sharpe Portfolio Allocation")
             alloc_df = pd.DataFrame({"Asset": asset_list, "Optimal Weight (%)": np.round(opt_weights * 100, 2)})
             
@@ -213,7 +210,7 @@ with tab2:
         st.warning("Please provide at least 2 tickers for portfolio optimization.")
 
 # ---------------------------------------------------------
-# TAB 3: MACRO FACTOR ATTRIBUTION
+# TAB 3: MACRO FACTOR ATTRIBUTION (WITH SCROLLABLE DROPDOWNS)
 # ---------------------------------------------------------
 with tab3:
     st.markdown("### 📊 Factor Attribution ($\alpha / \beta$ Regression)")
@@ -221,9 +218,9 @@ with tab3:
 
     col_target, col_bench = st.columns(2)
     with col_target:
-        target_asset = st.text_input("Target Asset Ticker", value="BTC-USD")
+        target_asset = st.selectbox("Select Target Asset", options=ASSET_OPTIONS, index=5)  # Defaults to BTC-USD
     with col_bench:
-        benchmark_asset = st.text_input("Benchmark Index Ticker", value="^GSPC")
+        benchmark_asset = st.selectbox("Select Benchmark Index", options=BENCHMARK_OPTIONS, index=0)  # Defaults to ^GSPC
 
     if target_asset and benchmark_asset:
         with st.spinner("Calculating regression parameters..."):
@@ -237,7 +234,6 @@ with tab3:
                 y = factor_returns[target_asset]
                 x = factor_returns[benchmark_asset]
                 
-                # Ordinary Least Squares Regression
                 beta, alpha = np.polyfit(x, y, 1)
                 annual_alpha = alpha * 252
                 
@@ -260,27 +256,47 @@ with tab3:
                 st.plotly_chart(fig_reg, use_container_width=True)
 
 # ---------------------------------------------------------
-# TAB 4: AUTOMATED WEBHOOK ALERTS
+# TAB 4: AUTOMATED WEBHOOK ALERTS (DISCORD & TELEGRAM)
 # ---------------------------------------------------------
 with tab4:
     st.markdown("### 🔔 Automated Signal Dispatcher")
     st.write("Configure real-time webhooks to stream trading signals directly to Discord or Telegram.")
 
-    webhook_url = st.text_input("Enter Discord or Telegram Webhook URL", type="password")
-    alert_asset = st.text_input("Alert Target Asset", value="RELIANCE.NS")
+    alert_service = st.radio("Select Alert Platform", ["Discord Webhook", "Telegram Bot"])
+    alert_asset = st.selectbox("Alert Target Asset", options=ASSET_OPTIONS, index=0)
 
-    if st.button("🚀 Test Trade Alert Signal"):
-        if webhook_url:
-            payload = {
-                "content": f"⚡ **QUANT TERMINAL ALERT**\n**Asset:** {alert_asset}\n**Signal:** BULLISH CROSSOVER (BUY)\n**Strategy:** 50/200-DMA Crossover\n**Timestamp:** {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}"
-            }
-            try:
-                response = requests.post(webhook_url, json=payload)
-                if response.status_code in [200, 204]:
-                    st.success("Trade alert successfully dispatched to Webhook!")
+    if alert_service == "Discord Webhook":
+        webhook_url = st.text_input("Discord Webhook URL", type="password")
+        
+        if st.button("🚀 Send Discord Alert"):
+            if webhook_url:
+                payload = {
+                    "content": f"⚡ **QUANT TERMINAL ALERT**\n**Asset:** {alert_asset}\n**Signal:** BULLISH CROSSOVER (BUY)\n**Timestamp:** {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                }
+                res = requests.post(webhook_url, json=payload)
+                if res.status_code in [200, 204]:
+                    st.success("Discord Alert Dispatched!")
                 else:
-                    st.error(f"Failed to deliver alert. Server responded with code: {response.status_code}")
-            except Exception as e:
-                st.error(f"Connection Error: {e}")
-        else:
-            st.warning("Please enter a valid Webhook URL to test live alerts.")
+                    st.error(f"Error {res.status_code}: Check Webhook URL")
+            else:
+                st.warning("Please enter a Discord Webhook URL.")
+
+    else:
+        bot_token = st.text_input("Telegram Bot Token (from @BotFather)", type="password")
+        chat_id = st.text_input("Telegram Chat ID (from @userinfobot)")
+        
+        if st.button("🚀 Send Telegram Alert"):
+            if bot_token and chat_id:
+                telegram_url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+                payload = {
+                    "chat_id": chat_id,
+                    "text": f"⚡ **QUANT TERMINAL ALERT**\n**Asset:** {alert_asset}\n**Signal:** BULLISH CROSSOVER (BUY)\n**Timestamp:** {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}",
+                    "parse_mode": "Markdown"
+                }
+                res = requests.post(telegram_url, json=payload)
+                if res.status_code == 200:
+                    st.success("Telegram Alert Dispatched!")
+                else:
+                    st.error(f"Error {res.status_code}: Check Token or Chat ID.")
+            else:
+                st.warning("Please enter both your Bot Token and Chat ID.")
