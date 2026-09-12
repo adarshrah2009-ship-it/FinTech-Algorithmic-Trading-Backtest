@@ -22,21 +22,30 @@ st.write(
 
 # Popular presets for quick selection
 POPULAR_ASSETS = [
-    "RELIANCE.NS", "TCS.NS", "INFY.NS", "HDFCBANK.NS", "TATAMOTORS.NS", "ADANIENT.NS", "ADANIPORTS.NS",
+    "RELIANCE.NS", "SUZLON.NS", "TCS.NS", "INFY.NS", "HDFCBANK.NS", "TATAMOTORS.NS", "ADANIENT.NS", "ADANIPORTS.NS",
     "BTC-USD", "ETH-USD", "SOL-USD", "GC=F", "CL=F", "^GSPC", "^NSEI", "^BSESN",
-    "AAPL", "NVDA", "TSLA", "MSFT", "AMZN", "GOOGL", "Custom Ticker..."
+    "AAPL", "NVDA", "TSLA", "MSFT", "AMZN", "GOOGL"
 ]
 
 POPULAR_BENCHMARKS = [
-    "^NSEI", "^GSPC", "^BSESN", "^IXIC", "DX-Y.NYB", "GC=F", "BTC-USD", "Custom Ticker..."
+    "^NSEI", "^GSPC", "^BSESN", "^IXIC", "DX-Y.NYB", "GC=F", "BTC-USD"
 ]
 
-# Helper function to handle custom inputs cleanly
-def resolve_ticker(selected_option, input_key, default_value):
-    if selected_option == "Custom Ticker...":
-        custom_input = st.text_input("Enter Yahoo Finance Ticker", value=default_value, key=input_key)
-        return custom_input.upper().strip()
-    return selected_option
+# Robust multi-index yfinance loader
+@st.cache_data(ttl=300)
+def fetch_data(symbol, period):
+    data = yf.download(symbol, period=period, progress=False)
+    if data.empty:
+        return data
+    if isinstance(data.columns, pd.MultiIndex):
+        try:
+            if symbol in data.columns.get_level_values(1):
+                data = data.xs(symbol, axis=1, level=1)
+            else:
+                data.columns = [col[0] for col in data.columns]
+        except Exception:
+            data.columns = [col[0] for col in data.columns]
+    return data
 
 # ---------------------------------------------------------
 # 2. NAVIGATION TABS
@@ -53,28 +62,24 @@ tab1, tab2, tab3, tab4 = st.tabs([
 # ---------------------------------------------------------
 with tab1:
     st.sidebar.header("🕹️ Strategy Parameters")
-    asset_preset = st.sidebar.selectbox("Select Asset Ticker", options=POPULAR_ASSETS, index=0)
-    ticker_clean = resolve_ticker(asset_preset, "tab1_custom_ticker", "RELIANCE.NS")
     
+    # Direct typing enabled via accept_new_options=True
+    ticker_clean = st.sidebar.selectbox(
+        "Select Asset Ticker",
+        options=POPULAR_ASSETS,
+        index=0,
+        accept_new_options=True
+    ).upper().strip()
+
     time_period = st.sidebar.selectbox("Horizon", options=["1y", "2y", "3y", "5y"], index=2)
     fast_ma = st.sidebar.slider("Fast Moving Average (Days)", 10, 50, 50)
     slow_ma = st.sidebar.slider("Slow Moving Average (Days)", 100, 200, 200)
-
-    @st.cache_data(ttl=300)
-    def fetch_data(symbol, period):
-        data = yf.download(symbol, period=period, progress=False)
-        if isinstance(data.columns, pd.MultiIndex):
-            try:
-                data = data.xs(symbol, axis=1, level=1)
-            except Exception:
-                data.columns = [col[0] for col in data.columns]
-        return data
 
     with st.spinner(f"Downloading data for {ticker_clean}..."):
         df = fetch_data(ticker_clean, time_period)
 
     if df.empty or len(df) <= slow_ma:
-        st.error(f"Insufficient historical data for '{ticker_clean}'. Please verify the Yahoo Finance ticker symbol.")
+        st.error(f"Insufficient historical data for '{ticker_clean}'. Please verify the Yahoo Finance ticker symbol (e.g., SUZLON.NS or 532667.BO).")
     else:
         # Technical Indicators
         df["Fast_MA"] = df["Close"].rolling(window=fast_ma).mean()
@@ -159,7 +164,7 @@ with tab2:
     st.markdown("### 🎯 Markowitz Portfolio Optimization Engine")
     st.write("Enter any combination of Yahoo Finance tickers separated by commas to calculate optimal risk-adjusted weights.")
 
-    default_assets = "ADANIENT.NS, RELIANCE.NS, TCS.NS, BTC-USD, GC=F"
+    default_assets = "SUZLON.NS, RELIANCE.NS, ADANIENT.NS, BTC-USD, GC=F"
     user_assets = st.text_input("Portfolio Asset Tickers (comma-separated)", value=default_assets)
     asset_list = [a.strip().upper() for a in user_assets.split(",") if a.strip()]
 
@@ -226,11 +231,20 @@ with tab3:
 
     col_target, col_bench = st.columns(2)
     with col_target:
-        t_select = st.selectbox("Select Target Asset", options=POPULAR_ASSETS, index=0)
-        target_asset = resolve_ticker(t_select, "tab3_target_custom", "RELIANCE.NS")
+        target_asset = st.selectbox(
+            "Select Target Asset",
+            options=POPULAR_ASSETS,
+            index=1,
+            accept_new_options=True
+        ).upper().strip()
+
     with col_bench:
-        b_select = st.selectbox("Select Benchmark Index", options=POPULAR_BENCHMARKS, index=0)
-        benchmark_asset = resolve_ticker(b_select, "tab3_bench_custom", "^NSEI")
+        benchmark_asset = st.selectbox(
+            "Select Benchmark Index",
+            options=POPULAR_BENCHMARKS,
+            index=0,
+            accept_new_options=True
+        ).upper().strip()
 
     if target_asset and benchmark_asset:
         with st.spinner(f"Analyzing {target_asset} against {benchmark_asset}..."):
@@ -275,8 +289,12 @@ with tab4:
     st.write("Configure real-time webhooks to stream trading signals directly to Discord or Telegram.")
 
     alert_service = st.radio("Select Alert Platform", ["Discord Webhook", "Telegram Bot"])
-    alert_preset = st.selectbox("Alert Target Asset", options=POPULAR_ASSETS, index=0)
-    alert_asset = resolve_ticker(alert_preset, "tab4_custom_ticker", "RELIANCE.NS")
+    alert_asset = st.selectbox(
+        "Alert Target Asset",
+        options=POPULAR_ASSETS,
+        index=0,
+        accept_new_options=True
+    ).upper().strip()
 
     if alert_service == "Discord Webhook":
         webhook_url = st.text_input("Discord Webhook URL", type="password")
