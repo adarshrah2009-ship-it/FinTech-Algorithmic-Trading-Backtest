@@ -8,3 +8,4 @@ requests
 statsmodels
 matplotlib
 seaborn
+openai
