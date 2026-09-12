@@ -150,7 +150,7 @@ with tab3:
         b1.metric("Strategy Return", f"{(clean_bt['Cum_Strat'].iloc[-1] - 1)*100:.2f}%")
         b2.metric("Buy & Hold Return", f"{(clean_bt['Cum_Bench'].iloc[-1] - 1)*100:.2f}%")
 
-# TAB 4: AI RESEARCH AGENT (DIRECT REST API APPROACH)
+# TAB 4: AI RESEARCH AGENT
 with tab4:
     st.subheader("Ask the AI Analyst (Free via Google Gemini)")
     st.write("Analyze whether you should **BUY**, **HOLD**, or **CASH OUT** using Google's free API.")
@@ -164,8 +164,8 @@ with tab4:
         else:
             with st.spinner(f"AI is analyzing market signals for {selected_asset}..."):
                 try:
-                    # Direct REST API call
-                    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={cleaned_key}"
+                    # Endpoint targeting gemini-3.6-flash
+                    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key={cleaned_key}"
                     
                     headers = {"Content-Type": "application/json"}
                     
@@ -194,8 +194,7 @@ with tab4:
                             "parts": [{"text": prompt_text}]
                         }],
                         "generationConfig": {
-                            "response_mime_type": "application/json",
-                            "temperature": 0.2
+                            "response_mime_type": "application/json"
                         }
                     }
 
