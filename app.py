@@ -17,40 +17,48 @@ st.set_page_config(
 
 st.title("🛡️ Institutional Quant & Portfolio Analytics Terminal")
 st.write(
-    "Multi-asset quantitative suite featuring technical crossovers, GARCH volatility, Markowitz portfolio optimization, macro factor attribution, and automated trade alerts."
+    "Multi-asset quantitative suite featuring technical crossovers, dynamic volatility, Markowitz portfolio optimization, macro factor attribution, and automated trade alerts."
 )
 
-# Predefined asset lists for scrollable dropdown menus
-ASSET_OPTIONS = [
-    "RELIANCE.NS", "TCS.NS", "INFY.NS", "HDFCBANK.NS", "TATAMOTORS.NS",
-    "BTC-USD", "ETH-USD", "GC=F", "^GSPC", "^NSEI", "AAPL", "NVDA", "TSLA"
+# Popular presets for quick selection
+POPULAR_ASSETS = [
+    "RELIANCE.NS", "TCS.NS", "INFY.NS", "HDFCBANK.NS", "TATAMOTORS.NS", "ADANIENT.NS", "ADANIPORTS.NS",
+    "BTC-USD", "ETH-USD", "SOL-USD", "GC=F", "CL=F", "^GSPC", "^NSEI", "^BSESN",
+    "AAPL", "NVDA", "TSLA", "MSFT", "AMZN", "GOOGL", "Custom Ticker..."
 ]
 
-BENCHMARK_OPTIONS = [
-    "^GSPC", "^NSEI", "^BSESN", "^IXIC", "DX-Y.NYB", "GC=F"
+POPULAR_BENCHMARKS = [
+    "^NSEI", "^GSPC", "^BSESN", "^IXIC", "DX-Y.NYB", "GC=F", "BTC-USD", "Custom Ticker..."
 ]
+
+# Helper function to handle custom inputs cleanly
+def resolve_ticker(selected_option, input_key, default_value):
+    if selected_option == "Custom Ticker...":
+        custom_input = st.text_input("Enter Yahoo Finance Ticker", value=default_value, key=input_key)
+        return custom_input.upper().strip()
+    return selected_option
 
 # ---------------------------------------------------------
 # 2. NAVIGATION TABS
 # ---------------------------------------------------------
 tab1, tab2, tab3, tab4 = st.tabs([
-    "📈 Single Asset & GARCH Risk",
+    "📈 Single Asset & Risk Analytics",
     "🎯 Portfolio Optimization",
     "📊 Macro Factor Attribution",
     "🔔 Live Webhook Alerts"
 ])
 
 # ---------------------------------------------------------
-# TAB 1: SINGLE ASSET BACKTEST & GARCH VOLATILITY
+# TAB 1: SINGLE ASSET BACKTEST & VOLATILITY
 # ---------------------------------------------------------
 with tab1:
     st.sidebar.header("🕹️ Strategy Parameters")
-    ticker = st.sidebar.selectbox("Select Asset Ticker", options=ASSET_OPTIONS, index=0)
+    asset_preset = st.sidebar.selectbox("Select Asset Ticker", options=POPULAR_ASSETS, index=0)
+    ticker_clean = resolve_ticker(asset_preset, "tab1_custom_ticker", "RELIANCE.NS")
+    
     time_period = st.sidebar.selectbox("Horizon", options=["1y", "2y", "3y", "5y"], index=2)
     fast_ma = st.sidebar.slider("Fast Moving Average (Days)", 10, 50, 50)
     slow_ma = st.sidebar.slider("Slow Moving Average (Days)", 100, 200, 200)
-
-    ticker_clean = ticker if ticker else "RELIANCE.NS"
 
     @st.cache_data(ttl=300)
     def fetch_data(symbol, period):
@@ -62,11 +70,11 @@ with tab1:
                 data.columns = [col[0] for col in data.columns]
         return data
 
-    with st.spinner("Downloading financial data..."):
+    with st.spinner(f"Downloading data for {ticker_clean}..."):
         df = fetch_data(ticker_clean, time_period)
 
     if df.empty or len(df) <= slow_ma:
-        st.error(f"Insufficient historical data for symbol '{ticker_clean}'.")
+        st.error(f"Insufficient historical data for '{ticker_clean}'. Please verify the Yahoo Finance ticker symbol.")
     else:
         # Technical Indicators
         df["Fast_MA"] = df["Close"].rolling(window=fast_ma).mean()
@@ -110,7 +118,7 @@ with tab1:
         df_clean["Dynamic_Vol"] = np.sqrt(ewma_vol) * np.sqrt(trading_days)
 
         # Performance Display
-        st.markdown("### 📊 Performance & Tail Risk Summary")
+        st.markdown(f"### 📊 Performance & Tail Risk Summary ({ticker_clean})")
         c1, c2, c3, c4, c5 = st.columns(5)
         c1.metric("Strategy Return", f"{strat_ret * 100:.2f}%")
         c2.metric("Buy & Hold Return", f"{bh_ret * 100:.2f}%")
@@ -149,11 +157,11 @@ with tab1:
 # ---------------------------------------------------------
 with tab2:
     st.markdown("### 🎯 Markowitz Portfolio Optimization Engine")
-    st.write("Calculate optimal asset weights to maximize the Sharpe Ratio or minimize portfolio variance via Monte Carlo simulation.")
+    st.write("Enter any combination of Yahoo Finance tickers separated by commas to calculate optimal risk-adjusted weights.")
 
-    default_assets = "BTC-USD, GC=F, RELIANCE.NS, TCS.NS, ^GSPC"
+    default_assets = "ADANIENT.NS, RELIANCE.NS, TCS.NS, BTC-USD, GC=F"
     user_assets = st.text_input("Portfolio Asset Tickers (comma-separated)", value=default_assets)
-    asset_list = [a.strip() for a in user_assets.split(",") if a.strip()]
+    asset_list = [a.strip().upper() for a in user_assets.split(",") if a.strip()]
 
     if len(asset_list) >= 2:
         with st.spinner("Computing Monte Carlo Efficient Frontier..."):
@@ -207,30 +215,32 @@ with tab2:
                 fig_ef.update_layout(template="plotly_dark", height=400, xaxis_title="Annualized Volatility (Risk)", yaxis_title="Annualized Expected Return", margin=dict(l=20, r=20, t=20, b=20))
                 st.plotly_chart(fig_ef, use_container_width=True)
     else:
-        st.warning("Please provide at least 2 tickers for portfolio optimization.")
+        st.warning("Please provide at least 2 valid tickers for portfolio optimization.")
 
 # ---------------------------------------------------------
-# TAB 3: MACRO FACTOR ATTRIBUTION (WITH SCROLLABLE DROPDOWNS)
+# TAB 3: MACRO FACTOR ATTRIBUTION (WITH ANY GLOBAL TICKERS)
 # ---------------------------------------------------------
 with tab3:
     st.markdown("### 📊 Factor Attribution ($\alpha / \beta$ Regression)")
-    st.write("Deconstruct target asset returns against broad market indices and liquidity benchmarks.")
+    st.write("Deconstruct target asset returns against broad market indices or benchmarks globally.")
 
     col_target, col_bench = st.columns(2)
     with col_target:
-        target_asset = st.selectbox("Select Target Asset", options=ASSET_OPTIONS, index=5)  # Defaults to BTC-USD
+        t_select = st.selectbox("Select Target Asset", options=POPULAR_ASSETS, index=0)
+        target_asset = resolve_ticker(t_select, "tab3_target_custom", "RELIANCE.NS")
     with col_bench:
-        benchmark_asset = st.selectbox("Select Benchmark Index", options=BENCHMARK_OPTIONS, index=0)  # Defaults to ^GSPC
+        b_select = st.selectbox("Select Benchmark Index", options=POPULAR_BENCHMARKS, index=0)
+        benchmark_asset = resolve_ticker(b_select, "tab3_bench_custom", "^NSEI")
 
     if target_asset and benchmark_asset:
-        with st.spinner("Calculating regression parameters..."):
+        with st.spinner(f"Analyzing {target_asset} against {benchmark_asset}..."):
             factor_data = yf.download([target_asset, benchmark_asset], period=time_period)["Close"]
             if isinstance(factor_data.columns, pd.MultiIndex):
                 factor_data.columns = [col[1] for col in factor_data.columns]
             
             factor_returns = factor_data.pct_change().dropna()
             
-            if len(factor_returns) > 30:
+            if len(factor_returns) > 30 and target_asset in factor_returns and benchmark_asset in factor_returns:
                 y = factor_returns[target_asset]
                 x = factor_returns[benchmark_asset]
                 
@@ -254,6 +264,8 @@ with tab3:
                 )
                 fig_reg.update_layout(template="plotly_dark", height=450)
                 st.plotly_chart(fig_reg, use_container_width=True)
+            else:
+                st.warning("Could not compute regression. Please verify ticker symbols.")
 
 # ---------------------------------------------------------
 # TAB 4: AUTOMATED WEBHOOK ALERTS (DISCORD & TELEGRAM)
@@ -263,7 +275,8 @@ with tab4:
     st.write("Configure real-time webhooks to stream trading signals directly to Discord or Telegram.")
 
     alert_service = st.radio("Select Alert Platform", ["Discord Webhook", "Telegram Bot"])
-    alert_asset = st.selectbox("Alert Target Asset", options=ASSET_OPTIONS, index=0)
+    alert_preset = st.selectbox("Alert Target Asset", options=POPULAR_ASSETS, index=0)
+    alert_asset = resolve_ticker(alert_preset, "tab4_custom_ticker", "RELIANCE.NS")
 
     if alert_service == "Discord Webhook":
         webhook_url = st.text_input("Discord Webhook URL", type="password")
