@@ -7,7 +7,8 @@ import plotly.graph_objects as go
 import requests
 import streamlit as st
 import yfinance as yf
-from openai import OpenAI
+from google import genai
+from google.genai import types
 
 # ---------------------------------------------------------
 # 1. PAGE CONFIGURATION
@@ -151,11 +152,6 @@ with tab3:
         b1.metric("Strategy Return", f"{(clean_bt['Cum_Strat'].iloc[-1] - 1)*100:.2f}%")
         b2.metric("Buy & Hold Return", f"{(clean_bt['Cum_Bench'].iloc[-1] - 1)*100:.2f}%")
 
-import json
-import os
-from google import genai
-from google.genai import types
-
 # TAB 4: AI RESEARCH AGENT (FREE GEMINI API)
 with tab4:
     st.subheader("Ask the AI Analyst (Free via Google Gemini)")
@@ -193,7 +189,7 @@ with tab4:
                     }}
                     """
 
-                    # Updated Model Name
+                    # Using gemini-2.5-flash model
                     response = client.models.generate_content(
                         model="gemini-2.5-flash",
                         contents=prompt,
