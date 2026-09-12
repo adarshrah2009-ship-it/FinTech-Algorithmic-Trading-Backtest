@@ -193,7 +193,7 @@ with tab4:
                     }}
                     """
 
-                    # Call Gemini 2.5 Flash Model
+                    # Updated Model Name
                     response = client.models.generate_content(
                         model="gemini-2.5-flash",
                         contents=prompt,
