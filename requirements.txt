@@ -8,4 +8,4 @@ requests
 statsmodels
 matplotlib
 seaborn
-openai
+google-genai
