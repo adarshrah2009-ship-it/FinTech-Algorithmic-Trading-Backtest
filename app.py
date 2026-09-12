@@ -100,11 +100,12 @@ vol_confirm = bool(latest["Volume"] > latest["Volume_MA"])
 # ---------------------------------------------------------
 # TABS
 # ---------------------------------------------------------
-tab1, tab2, tab3, tab4 = st.tabs([
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "📊 Multi-Factor Matrix",
     "⚠️ Chop Filter",
     "🧪 Backtest Engine",
-    "🤖 AI Research Agent"
+    "🤖 AI Research Agent",
+    "🧮 Risk & ROI Calculator"
 ])
 
 # TAB 1: MATRIX
@@ -164,9 +165,7 @@ with tab4:
         else:
             with st.spinner(f"AI is analyzing market signals for {selected_asset}..."):
                 try:
-                    # Endpoint targeting gemini-3.6-flash
                     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key={cleaned_key}"
-                    
                     headers = {"Content-Type": "application/json"}
                     
                     prompt_text = f"""
@@ -225,3 +224,55 @@ with tab4:
 
                 except Exception as e:
                     st.error(f"Error calling Gemini API: {e}")
+
+# TAB 5: RISK & ROI CALCULATOR
+with tab5:
+    st.subheader(f"Position Sizing & Return Calculator ({selected_asset})")
+    
+    col_input1, col_input2 = st.columns(2)
+    
+    with col_input1:
+        account_balance = st.number_input("Total Portfolio / Trading Capital ($ / ₹)", min_value=100.0, value=10000.0, step=500.0)
+        risk_per_trade_pct = st.number_input("Risk Per Trade (%)", min_value=0.1, max_value=100.0, value=2.0, step=0.5)
+        entry_price = st.number_input("Planned Entry Price", min_value=0.01, value=price, step=1.0)
+        
+    with col_input2:
+        stop_loss_price = st.number_input("Stop Loss Price", min_value=0.01, value=round(price * 0.95, 2), step=1.0)
+        take_profit_price = st.number_input("Target Take-Profit Price", min_value=0.01, value=round(price * 1.15, 2), step=1.0)
+
+    # Calculation logic
+    risk_per_share = abs(entry_price - stop_loss_price)
+    reward_per_share = abs(take_profit_price - entry_price)
+    
+    max_capital_risk = account_balance * (risk_per_trade_pct / 100.0)
+    
+    if risk_per_share > 0:
+        position_size_units = max_capital_risk / risk_per_share
+        total_position_value = position_size_units * entry_price
+        
+        potential_profit = position_size_units * reward_per_share
+        roi_on_capital = (potential_profit / account_balance) * 100.0
+        roi_on_position = (reward_per_share / entry_price) * 100.0
+        risk_reward_ratio = reward_per_share / risk_per_share
+        
+        st.markdown("---")
+        st.markdown("### 📊 Trade Metrics Breakdown")
+        
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Recommended Position Size", f"{position_size_units:.2f} Units")
+        m2.metric("Total Investment Value", f"{total_position_value:.2f}")
+        m3.metric("Max Dollar/Rupee Risk", f"{max_capital_risk:.2f}")
+        m4.metric("Risk-to-Reward Ratio", f"1 : {risk_reward_ratio:.2f}")
+        
+        m5, m6, m7 = st.columns(3)
+        m5.metric("Potential Profit", f"{potential_profit:.2f}", delta=f"{roi_on_position:.2f}% (Price)")
+        m6.metric("Expected Portfolio ROI", f"{roi_on_capital:.2f}%")
+        
+        if risk_reward_ratio >= 2.0:
+            m7.success("Excellent Risk-Reward Ratio (>= 1:2)")
+        elif risk_reward_ratio >= 1.0:
+            m7.warning("Moderate Risk-Reward Ratio (1:1 - 1:2)")
+        else:
+            m7.error("Poor Risk-Reward (Risk exceeds reward!)")
+    else:
+        st.error("Stop Loss Price cannot be equal to the Entry Price.")
