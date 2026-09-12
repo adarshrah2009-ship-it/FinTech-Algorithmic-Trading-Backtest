@@ -1,220 +1,215 @@
+import json
+import os
 import numpy as np
 import pandas as pd
+import plotly.express as px
 import plotly.graph_objects as go
+import requests
 import streamlit as st
 import yfinance as yf
+from openai import OpenAI
 
-# Page setup
+# ---------------------------------------------------------
+# 1. PAGE CONFIGURATION
+# ---------------------------------------------------------
 st.set_page_config(
-    page_title="Pro Quant Terminal", layout="wide", page_icon="📈"
+    page_title="Pro Quant Terminal",
+    layout="wide",
+    page_icon="📈"
 )
-st.title("📈 Advanced Quantitative Trading Terminal")
+
+st.title("🛡️ Institutional Quant & AI Research Terminal")
 
 POPULAR_ASSETS = [
-    "RELIANCE.NS",
-    "TATAMOTORS.NS",
-    "SUZLON.NS",
-    "BTC-USD",
-    "AAPL",
-    "NVDA",
+    "SUZLON.NS", "RELIANCE.NS", "TATAMOTORS.NS", "TCS.NS", "INFY.NS", 
+    "ADANIENT.NS", "BTC-USD", "ETH-USD", "GC=F", "AAPL", "NVDA", "TSLA"
 ]
-selected_asset = st.sidebar.selectbox("Select Asset", POPULAR_ASSETS)
-selected_period = st.sidebar.selectbox(
-    "Data Horizon", ["1y", "2y", "5y"], index=1
-)
 
+# Sidebar asset picker
+selected_asset = st.sidebar.selectbox(
+    "Select Asset Ticker", 
+    options=POPULAR_ASSETS,
+    accept_new_options=True
+).upper().strip()
 
-# Helper Functions: Data & Indicators
-@st.cache_data(ttl=3600)
-def fetch_data(ticker, period):
-    df = yf.download(ticker, period=period, progress=False)
-    if isinstance(df.columns, pd.MultiIndex):
-        df.columns = [col[0] for col in df.columns]
-    return df
+selected_period = st.sidebar.selectbox("Data Horizon", ["1y", "2y", "5y"], index=1)
 
+# Dynamic data loader
+@st.cache_data(ttl=300)
+def fetch_data(symbol, period):
+    data = yf.download(symbol, period=period, progress=False)
+    if data.empty:
+        return data
+    if isinstance(data.columns, pd.MultiIndex):
+        try:
+            if symbol in data.columns.get_level_values(1):
+                data = data.xs(symbol, axis=1, level=1)
+            else:
+                data.columns = [col[0] for col in data.columns]
+        except Exception:
+            data.columns = [col[0] for col in data.columns]
+    return data
 
 def calculate_indicators(df):
     data = df.copy()
-    # Moving Averages
     data["50_DMA"] = data["Close"].rolling(50).mean()
     data["200_DMA"] = data["Close"].rolling(200).mean()
 
-    # RSI (14-period)
+    # RSI (14)
     delta = data["Close"].diff()
     gain = (delta.where(delta > 0, 0)).rolling(14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
     rs = gain / loss
     data["RSI"] = 100 - (100 / (1 + rs))
 
-    # ADX & DMI (14-period)
+    # ADX (14)
     high_diff = data["High"].diff()
     low_diff = -data["Low"].diff()
-
     pos_dm = np.where((high_diff > low_diff) & (high_diff > 0), high_diff, 0)
     neg_dm = np.where((low_diff > high_diff) & (low_diff > 0), low_diff, 0)
-
     tr1 = data["High"] - data["Low"]
     tr2 = (data["High"] - data["Close"].shift(1)).abs()
     tr3 = (data["Low"] - data["Close"].shift(1)).abs()
     tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-
     atr = tr.rolling(14).mean()
     plus_di = 100 * (pd.Series(pos_dm).rolling(14).mean() / atr)
     minus_di = 100 * (pd.Series(neg_dm).rolling(14).mean() / atr)
-
     dx = (abs(plus_di - minus_di) / (plus_di + minus_di)) * 100
     data["ADX"] = dx.rolling(14).mean()
-
-    # Volume 20-period Moving Average
     data["Volume_MA"] = data["Volume"].rolling(20).mean()
 
     return data
 
-
+# Fetch data
 df_raw = fetch_data(selected_asset, selected_period)
 
 if df_raw.empty or len(df_raw) < 200:
-    st.error(
-        f"Insufficient historical data for {selected_asset}. Please select a longer horizon."
-    )
+    st.error(f"Insufficient data for '{selected_asset}'. Try selecting a longer horizon (e.g. 5y).")
     st.stop()
 
 df = calculate_indicators(df_raw)
 
-# Extract Latest Values
+# Latest numbers
 latest = df.iloc[-1]
-price = latest["Close"]
-rsi = latest["RSI"]
-adx = latest["ADX"]
-sma50 = latest["50_DMA"]
-sma200 = latest["200_DMA"]
-vol_confirm = latest["Volume"] > latest["Volume_MA"]
-
-# Tabs Layout
-tab1, tab2, tab3 = st.tabs(
-    [
-        "📊 Multi-Factor Matrix",
-        "⚠️ Chop / Volatility Filter",
-        "🧪 Backtest Engine",
-    ]
-)
+price = float(latest["Close"])
+rsi = float(latest["RSI"])
+adx = float(latest["ADX"])
+sma50 = float(latest["50_DMA"])
+sma200 = float(latest["200_DMA"])
+vol_confirm = bool(latest["Volume"] > latest["Volume_MA"])
 
 # ---------------------------------------------------------
-# FEATURE 1: MULTI-FACTOR COMPOSITE MATRIX
+# TABS
 # ---------------------------------------------------------
+tab1, tab2, tab3, tab4 = st.tabs([
+    "📊 Multi-Factor Matrix",
+    "⚠️ Chop Filter",
+    "🧪 Backtest Engine",
+    "🤖 AI Research Agent"
+])
+
+# TAB 1: MATRIX
 with tab1:
-    st.subheader("Composite Technical Scorecard")
-
-    # Score calculation (Max +4 Bullish, Min -4 Bearish)
-    score = 0
-    ma_signal = 1 if sma50 > sma200 else -1
-    rsi_signal = 1 if rsi > 50 and rsi < 70 else (-1 if rsi < 50 else 0)
-    adx_signal = 1 if adx > 25 else 0
-    vol_signal = 1 if vol_confirm else 0
-
-    score = ma_signal + rsi_signal + (adx_signal if ma_signal > 0 else -adx_signal)
-
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Current Price", f"₹{price:.2f}" if ".NS" in selected_asset else f"${price:.2f}")
-    col2.metric("RSI (14)", f"{rsi:.1f}", delta="Bullish Zone" if rsi > 50 else "Bearish Zone")
-    col3.metric("ADX (Trend Strength)", f"{adx:.1f}", delta="Strong Trend" if adx > 25 else "Weak/Choppy")
-    col4.metric("Volume Above 20-MA", "YES" if vol_confirm else "NO")
-
-    st.markdown("---")
-
-    if score >= 2 and adx > 25:
-        st.success(f"🟢 **STRONG BULLISH CONFIRMATION** (Composite Score: {score}/4)")
-    elif score <= -2 and adx > 25:
-        st.error(f"🔴 **STRONG BEARISH CONFIRMATION** (Composite Score: {score}/4)")
-    else:
-        st.warning(f"🟡 **NEUTRAL / MIXED SIGNALS** (Composite Score: {score}/4) — Avoid heavy directional bets.")
+    st.subheader(f"Technical Scorecard ({selected_asset})")
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Current Price", f"{price:.2f}")
+    c2.metric("RSI (14)", f"{rsi:.1f}")
+    c3.metric("ADX (Trend Strength)", f"{adx:.1f}")
+    c4.metric("High Volume?", "YES" if vol_confirm else "NO")
 
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=df.index, y=df["Close"], name="Close Price", line=dict(color="white")))
+    fig.add_trace(go.Scatter(x=df.index, y=df["Close"], name="Price", line=dict(color="white")))
     fig.add_trace(go.Scatter(x=df.index, y=df["50_DMA"], name="50 DMA", line=dict(color="orange")))
     fig.add_trace(go.Scatter(x=df.index, y=df["200_DMA"], name="200 DMA", line=dict(color="red")))
-    fig.update_layout(title=f"{selected_asset} Price & Moving Averages", template="plotly_dark", height=450)
+    fig.update_layout(template="plotly_dark", height=400)
     st.plotly_chart(fig, use_container_width=True)
 
-# ---------------------------------------------------------
-# FEATURE 2: VOLATILE MARKET CHOP FILTER
-# ---------------------------------------------------------
+# TAB 2: CHOP FILTER
 with tab2:
-    st.subheader("Market Regime & Sideways Filter")
-
-    # Flag sideways condition when ADX < 20 or MAs are converging within 1.5% range
+    st.subheader("Market Trend vs Sideways Range")
     ma_diff_pct = abs(sma50 - sma200) / price * 100
-    is_sideways = (adx < 20) or (ma_diff_pct < 1.5)
-
-    if is_sideways:
-        st.error("🚫 **SIDEWAYS / CHOPPY MARKET DETECTED**")
-        st.write("Market trend strength is insufficient. Moving average crossovers are prone to false signals (whipsaws). **Recommendation: Stay on Sidelines.**")
+    if adx < 20 or ma_diff_pct < 1.5:
+        st.error("🚫 **SIDEWAYS / CHOPPY MARKET** — High risk of false signals!")
     else:
-        st.success("✅ **TRENDING MARKET DETECTED**")
-        st.write(f"Trend strength is sufficient (ADX = {adx:.1f}). Crossover signals carry higher statistical validity.")
+        st.success("✅ **CLEAR TREND DETECTED** — Signals carry higher accuracy.")
 
-    st.markdown("#### **Regime Breakdown**")
-    r_col1, r_col2 = st.columns(2)
-    with r_col1:
-        st.info(f"**ADX Reading:** {adx:.2f}\n* (ADX > 25 indicates trend presence; < 20 indicates consolidated range)")
-    with r_col2:
-        st.info(f"**MA Convergence Gap:** {ma_diff_pct:.2f}%\n* (Gaps under 1.5% signal tight consolidation and chop risk)")
-
-# ---------------------------------------------------------
-# FEATURE 3: STRATEGY BACKTESTING ENGINE (HARDENED)
-# ---------------------------------------------------------
+# TAB 3: BACKTEST
 with tab3:
-    st.subheader("Historical Performance Backtest")
-    st.write("Evaluate how a **Multi-Factor Trend Strategy** performed historically compared to Buy & Hold.")
-
-    # Clean missing values safely
+    st.subheader("Backtest Strategy vs Buy & Hold")
     bt_df = df.copy()
-    
-    # Calculate strategy signals
     bt_df["Signal"] = 0
-    signal_condition = (bt_df["50_DMA"] > bt_df["200_DMA"]) & (bt_df["RSI"] > 50) & (bt_df["ADX"] > 20)
-    bt_df.loc[signal_condition, "Signal"] = 1
+    bt_df.loc[(bt_df["50_DMA"] > bt_df["200_DMA"]) & (bt_df["RSI"] > 50) & (bt_df["ADX"] > 20), "Signal"] = 1
+    bt_df["Bench_Ret"] = bt_df["Close"].pct_change()
+    bt_df["Strat_Ret"] = bt_df["Bench_Ret"] * bt_df["Signal"].shift(1)
+    
+    clean_bt = bt_df.dropna(subset=["Strat_Ret"]).copy()
+    if not clean_bt.empty:
+        clean_bt["Cum_Strat"] = (1 + clean_bt["Strat_Ret"]).cumprod()
+        clean_bt["Cum_Bench"] = (1 + clean_bt["Bench_Ret"]).cumprod()
+        
+        b1, b2 = st.columns(2)
+        b1.metric("Strategy Return", f"{(clean_bt['Cum_Strat'].iloc[-1] - 1)*100:.2f}%")
+        b2.metric("Buy & Hold Return", f"{(clean_bt['Cum_Bench'].iloc[-1] - 1)*100:.2f}%")
 
-    # Daily Returns
-    bt_df["Benchmark_Returns"] = bt_df["Close"].pct_change()
-    bt_df["Strategy_Returns"] = bt_df["Benchmark_Returns"] * bt_df["Signal"].shift(1)
+# TAB 4: AI RESEARCH AGENT
+with tab4:
+    st.subheader("🤖 Ask the AI Analyst")
+    st.write("Click the button below to ask ChatGPT whether you should **BUY**, **HOLD**, or **CASH OUT** based on live data.")
 
-    # Drop NaNs generated by shifting and pct_change
-    bt_df_clean = bt_df.dropna(subset=["Strategy_Returns", "Benchmark_Returns"]).copy()
+    user_api_key = st.text_input("Paste your OpenAI API Key here (starts with sk-...):", type="password")
 
-    if bt_df_clean.empty:
-        st.error("Insufficient complete data points to run backtest. Please select a longer horizon (e.g., 5y).")
-    else:
-        # Cumulative Equity Curves
-        bt_df_clean["Cum_Strategy"] = (1 + bt_df_clean["Strategy_Returns"]).cumprod()
-        bt_df_clean["Cum_Benchmark"] = (1 + bt_df_clean["Benchmark_Returns"]).cumprod()
+    if st.button("🧠 Run AI Decision Engine"):
+        if not user_api_key:
+            st.warning("Please paste your OpenAI API Key above to run the AI!")
+        else:
+            with st.spinner(f"AI is analyzing market signals for {selected_asset}..."):
+                try:
+                    client = OpenAI(api_key=user_api_key)
 
-        # Performance Metrics
-        total_strat_ret = (bt_df_clean["Cum_Strategy"].iloc[-1] - 1) * 100
-        total_bench_ret = (bt_df_clean["Cum_Benchmark"].iloc[-1] - 1) * 100
+                    prompt = f"""
+                    You are an expert Quantitative Investment Advisor.
+                    Analyze this stock: {selected_asset}
+                    - Price: {price:.2f}
+                    - 50-DMA: {sma50:.2f}
+                    - 200-DMA: {sma200:.2f}
+                    - RSI: {rsi:.1f}
+                    - ADX Trend Strength: {adx:.1f}
+                    - Technical Regime: {"Bullish" if sma50 > sma200 else "Bearish"}
 
-        # Trade Count & Win Rate
-        trades = bt_df_clean["Signal"].diff().abs()
-        active_returns = bt_df_clean[bt_df_clean["Signal"].shift(1) == 1]["Strategy_Returns"]
-        winning_days = (active_returns > 0).sum()
-        total_active_days = len(active_returns)
-        win_rate = (winning_days / total_active_days * 100) if total_active_days > 0 else 0
+                    Task: Tell the user if they should "BUY", "CASH_OUT", or "HOLD". Give a confidence score (0-100%) and short reasoning.
 
-        # Maximum Drawdown
-        peak = bt_df_clean["Cum_Strategy"].cummax()
-        drawdown = (bt_df_clean["Cum_Strategy"] - peak) / peak
-        max_drawdown = drawdown.min() * 100 if not drawdown.empty else 0
+                    Return ONLY a JSON object:
+                    {{
+                        "action": "BUY" | "CASH_OUT" | "HOLD",
+                        "confidence": 85,
+                        "reasoning": "Your short explanation here."
+                    }}
+                    """
 
-        # Display Metrics
-        b_col1, b_col2, b_col3, b_col4 = st.columns(4)
-        b_col1.metric("Strategy Return", f"{total_strat_ret:.2f}%")
-        b_col2.metric("Buy & Hold Return", f"{total_bench_ret:.2f}%")
-        b_col3.metric("Win Rate", f"{win_rate:.1f}%")
-        b_col4.metric("Max Drawdown", f"{max_drawdown:.2f}%")
+                    response = client.chat.completions.create(
+                        model="gpt-4o-mini",
+                        messages=[{"role": "user", "content": prompt}],
+                        temperature=0.2,
+                        response_format={"type": "json_object"}
+                    )
 
-        # Interactive Cumulative Return Chart
-        bt_fig = go.Figure()
-        bt_fig.add_trace(go.Scatter(x=bt_df_clean.index, y=bt_df_clean["Cum_Strategy"], name="Multi-Factor Strategy", line=dict(color="cyan", width=2)))
-        bt_fig.add_trace(go.Scatter(x=bt_df_clean.index, y=bt_df_clean["Cum_Benchmark"], name="Buy & Hold Benchmark", line=dict(color="gray", dash="dash")))
-        bt_fig.update_layout(title=f"Cumulative Returns Comparison ({selected_asset})", template="plotly_dark", height=400, margin=dict(l=20, r=20, t=30, b=20))
-        st.plotly_chart(bt_fig, use_container_width=True)
+                    result = json.loads(response.choices[0].message.content)
+                    
+                    act = result.get("action", "HOLD")
+                    conf = result.get("confidence", 0)
+                    reason = result.get("reasoning", "")
+
+                    st.markdown("---")
+                    col_a, col_b = st.columns(2)
+                    if act == "BUY":
+                        col_a.success(f"### Signal: 🟢 **{act}**")
+                    elif act == "CASH_OUT":
+                        col_a.error(f"### Signal: 🔴 **{act}**")
+                    else:
+                        col_a.warning(f"### Signal: 🟡 **{act}**")
+
+                    col_b.metric("AI Confidence", f"{conf}%")
+                    st.info(f"**AI Rationale:**\n{reason}")
+
+                except Exception as e:
+                    st.error(f"Error calling OpenAI API: {e}")
