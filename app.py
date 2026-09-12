@@ -1,354 +1,207 @@
 import numpy as np
 import pandas as pd
-import plotly.express as px
 import plotly.graph_objects as go
-import requests
 import streamlit as st
 import yfinance as yf
 
-# ---------------------------------------------------------
-# 1. PAGE CONFIGURATION
-# ---------------------------------------------------------
+# Page setup
 st.set_page_config(
-    page_title="Institutional Quant & Risk Terminal",
-    layout="wide",
-    initial_sidebar_state="expanded",
+    page_title="Pro Quant Terminal", layout="wide", page_icon="📈"
 )
+st.title("📈 Advanced Quantitative Trading Terminal")
 
-st.title("🛡️ Institutional Quant & Portfolio Analytics Terminal")
-st.write(
-    "Multi-asset quantitative suite featuring technical crossovers, dynamic volatility, Markowitz portfolio optimization, macro factor attribution, and automated trade alerts."
-)
-
-# Popular presets for quick selection
 POPULAR_ASSETS = [
-    "RELIANCE.NS", "SUZLON.NS", "TCS.NS", "INFY.NS", "HDFCBANK.NS", "TATAMOTORS.NS", "ADANIENT.NS", "ADANIPORTS.NS",
-    "BTC-USD", "ETH-USD", "SOL-USD", "GC=F", "CL=F", "^GSPC", "^NSEI", "^BSESN",
-    "AAPL", "NVDA", "TSLA", "MSFT", "AMZN", "GOOGL"
+    "RELIANCE.NS",
+    "TATAMOTORS.NS",
+    "SUZLON.NS",
+    "BTC-USD",
+    "AAPL",
+    "NVDA",
 ]
+selected_asset = st.sidebar.selectbox("Select Asset", POPULAR_ASSETS)
+selected_period = st.sidebar.selectbox(
+    "Data Horizon", ["1y", "2y", "5y"], index=1
+)
 
-POPULAR_BENCHMARKS = [
-    "^NSEI", "^GSPC", "^BSESN", "^IXIC", "DX-Y.NYB", "GC=F", "BTC-USD"
-]
 
-# Robust multi-index yfinance loader
-@st.cache_data(ttl=300)
-def fetch_data(symbol, period):
-    data = yf.download(symbol, period=period, progress=False)
-    if data.empty:
-        return data
-    if isinstance(data.columns, pd.MultiIndex):
-        try:
-            if symbol in data.columns.get_level_values(1):
-                data = data.xs(symbol, axis=1, level=1)
-            else:
-                data.columns = [col[0] for col in data.columns]
-        except Exception:
-            data.columns = [col[0] for col in data.columns]
+# Helper Functions: Data & Indicators
+@st.cache_data(ttl=3600)
+def fetch_data(ticker, period):
+    df = yf.download(ticker, period=period, progress=False)
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = [col[0] for col in df.columns]
+    return df
+
+
+def calculate_indicators(df):
+    data = df.copy()
+    # Moving Averages
+    data["50_DMA"] = data["Close"].rolling(50).mean()
+    data["200_DMA"] = data["Close"].rolling(200).mean()
+
+    # RSI (14-period)
+    delta = data["Close"].diff()
+    gain = (delta.where(delta > 0, 0)).rolling(14).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
+    rs = gain / loss
+    data["RSI"] = 100 - (100 / (1 + rs))
+
+    # ADX & DMI (14-period)
+    high_diff = data["High"].diff()
+    low_diff = -data["Low"].diff()
+
+    pos_dm = np.where((high_diff > low_diff) & (high_diff > 0), high_diff, 0)
+    neg_dm = np.where((low_diff > high_diff) & (low_diff > 0), low_diff, 0)
+
+    tr1 = data["High"] - data["Low"]
+    tr2 = (data["High"] - data["Close"].shift(1)).abs()
+    tr3 = (data["Low"] - data["Close"].shift(1)).abs()
+    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+
+    atr = tr.rolling(14).mean()
+    plus_di = 100 * (pd.Series(pos_dm).rolling(14).mean() / atr)
+    minus_di = 100 * (pd.Series(neg_dm).rolling(14).mean() / atr)
+
+    dx = (abs(plus_di - minus_di) / (plus_di + minus_di)) * 100
+    data["ADX"] = dx.rolling(14).mean()
+
+    # Volume 20-period Moving Average
+    data["Volume_MA"] = data["Volume"].rolling(20).mean()
+
     return data
 
-# ---------------------------------------------------------
-# 2. NAVIGATION TABS
-# ---------------------------------------------------------
-tab1, tab2, tab3, tab4 = st.tabs([
-    "📈 Single Asset & Risk Analytics",
-    "🎯 Portfolio Optimization",
-    "📊 Macro Factor Attribution",
-    "🔔 Live Webhook Alerts"
-])
+
+df_raw = fetch_data(selected_asset, selected_period)
+
+if df_raw.empty or len(df_raw) < 200:
+    st.error(
+        f"Insufficient historical data for {selected_asset}. Please select a longer horizon."
+    )
+    st.stop()
+
+df = calculate_indicators(df_raw)
+
+# Extract Latest Values
+latest = df.iloc[-1]
+price = latest["Close"]
+rsi = latest["RSI"]
+adx = latest["ADX"]
+sma50 = latest["50_DMA"]
+sma200 = latest["200_DMA"]
+vol_confirm = latest["Volume"] > latest["Volume_MA"]
+
+# Tabs Layout
+tab1, tab2, tab3 = st.tabs(
+    [
+        "📊 Multi-Factor Matrix",
+        "⚠️ Chop / Volatility Filter",
+        "🧪 Backtest Engine",
+    ]
+)
 
 # ---------------------------------------------------------
-# TAB 1: SINGLE ASSET BACKTEST & VOLATILITY
+# FEATURE 1: MULTI-FACTOR COMPOSITE MATRIX
 # ---------------------------------------------------------
 with tab1:
-    st.sidebar.header("🕹️ Strategy Parameters")
-    
-    # Direct typing enabled via accept_new_options=True
-    ticker_clean = st.sidebar.selectbox(
-        "Select Asset Ticker",
-        options=POPULAR_ASSETS,
-        index=0,
-        accept_new_options=True
-    ).upper().strip()
+    st.subheader("Composite Technical Scorecard")
 
-    time_period = st.sidebar.selectbox("Horizon", options=["1y", "2y", "3y", "5y"], index=2)
-    fast_ma = st.sidebar.slider("Fast Moving Average (Days)", 10, 50, 50)
-    slow_ma = st.sidebar.slider("Slow Moving Average (Days)", 100, 200, 200)
+    # Score calculation (Max +4 Bullish, Min -4 Bearish)
+    score = 0
+    ma_signal = 1 if sma50 > sma200 else -1
+    rsi_signal = 1 if rsi > 50 and rsi < 70 else (-1 if rsi < 50 else 0)
+    adx_signal = 1 if adx > 25 else 0
+    vol_signal = 1 if vol_confirm else 0
 
-    with st.spinner(f"Downloading data for {ticker_clean}..."):
-        df = fetch_data(ticker_clean, time_period)
+    score = ma_signal + rsi_signal + (adx_signal if ma_signal > 0 else -adx_signal)
 
-    if df.empty or len(df) <= slow_ma:
-        st.error(f"Insufficient historical data for '{ticker_clean}'. Please verify the Yahoo Finance ticker symbol (e.g., SUZLON.NS or 532667.BO).")
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Current Price", f"₹{price:.2f}" if ".NS" in selected_asset else f"${price:.2f}")
+    col2.metric("RSI (14)", f"{rsi:.1f}", delta="Bullish Zone" if rsi > 50 else "Bearish Zone")
+    col3.metric("ADX (Trend Strength)", f"{adx:.1f}", delta="Strong Trend" if adx > 25 else "Weak/Choppy")
+    col4.metric("Volume Above 20-MA", "YES" if vol_confirm else "NO")
+
+    st.markdown("---")
+
+    if score >= 2 and adx > 25:
+        st.success(f"🟢 **STRONG BULLISH CONFIRMATION** (Composite Score: {score}/4)")
+    elif score <= -2 and adx > 25:
+        st.error(f"🔴 **STRONG BEARISH CONFIRMATION** (Composite Score: {score}/4)")
     else:
-        # Technical Indicators
-        df["Fast_MA"] = df["Close"].rolling(window=fast_ma).mean()
-        df["Slow_MA"] = df["Close"].rolling(window=slow_ma).mean()
-        df["Signal"] = np.where(df["Fast_MA"] > df["Slow_MA"], 1, 0)
-        df["Position"] = df["Signal"].shift(1)
-        df["Daily_Return"] = df["Close"].pct_change()
-        df["Strategy_Return"] = df["Daily_Return"] * df["Position"]
+        st.warning(f"🟡 **NEUTRAL / MIXED SIGNALS** (Composite Score: {score}/4) — Avoid heavy directional bets.")
 
-        df_clean = df.dropna().copy()
-        initial_cap = 100000
-
-        df_clean["Buy_Hold_Equity"] = initial_cap * (1 + df_clean["Daily_Return"]).cumprod()
-        df_clean["Strategy_Equity"] = initial_cap * (1 + df_clean["Strategy_Return"]).cumprod()
-
-        # Risk Metrics
-        trading_days = 252
-        strat_ret = (df_clean["Strategy_Equity"].iloc[-1] - initial_cap) / initial_cap
-        bh_ret = (df_clean["Buy_Hold_Equity"].iloc[-1] - initial_cap) / initial_cap
-
-        rf_daily = 0.06 / trading_days
-        excess_ret = df_clean["Strategy_Return"] - rf_daily
-        sharpe_ratio = (
-            np.sqrt(trading_days) * excess_ret.mean() / df_clean["Strategy_Return"].std()
-            if df_clean["Strategy_Return"].std() != 0
-            else 0
-        )
-
-        # Tail Risk (VaR & CVaR)
-        confidence_level = 0.95
-        var_95 = np.percentile(df_clean["Daily_Return"], (1 - confidence_level) * 100)
-        cvar_95 = df_clean["Daily_Return"][df_clean["Daily_Return"] <= var_95].mean()
-
-        # Dynamic EWMA Volatility
-        lambda_param = 0.94
-        returns_sq = df_clean["Daily_Return"] ** 2
-        ewma_vol = np.zeros(len(returns_sq))
-        ewma_vol[0] = returns_sq.iloc[0]
-        for t in range(1, len(returns_sq)):
-            ewma_vol[t] = lambda_param * ewma_vol[t - 1] + (1 - lambda_param) * returns_sq.iloc[t]
-        df_clean["Dynamic_Vol"] = np.sqrt(ewma_vol) * np.sqrt(trading_days)
-
-        # Performance Display
-        st.markdown(f"### 📊 Performance & Tail Risk Summary ({ticker_clean})")
-        c1, c2, c3, c4, c5 = st.columns(5)
-        c1.metric("Strategy Return", f"{strat_ret * 100:.2f}%")
-        c2.metric("Buy & Hold Return", f"{bh_ret * 100:.2f}%")
-        c3.metric("Sharpe Ratio", f"{sharpe_ratio:.2f}")
-        c4.metric("Daily 95% VaR", f"{var_95 * 100:.2f}%")
-        c5.metric("Expected Shortfall (CVaR)", f"{cvar_95 * 100:.2f}%")
-
-        # Interactive Chart
-        st.markdown(f"### 📈 Technical Crossover Analysis ({ticker_clean})")
-        fig = go.Figure()
-        fig.add_trace(go.Candlestick(x=df_clean.index, open=df_clean["Open"], high=df_clean["High"], low=df_clean["Low"], close=df_clean["Close"], name="OHLC"))
-        fig.add_trace(go.Scatter(x=df_clean.index, y=df_clean["Fast_MA"], line=dict(color="orange", width=1.5), name=f"{fast_ma}-DMA"))
-        fig.add_trace(go.Scatter(x=df_clean.index, y=df_clean["Slow_MA"], line=dict(color="red", width=2), name=f"{slow_ma}-DMA"))
-        fig.update_layout(xaxis_rangeslider_visible=False, template="plotly_dark", height=450, margin=dict(l=20, r=20, t=20, b=20))
-        st.plotly_chart(fig, use_container_width=True)
-
-        # Dynamic Volatility Chart
-        st.markdown("### ⚡ Dynamic EWMA Volatility Forecasting (Annualized)")
-        fig_vol = go.Figure()
-        fig_vol.add_trace(go.Scatter(x=df_clean.index, y=df_clean["Dynamic_Vol"] * 100, line=dict(color="cyan", width=1.5), name="Annualized Volatility (%)"))
-        fig_vol.update_layout(template="plotly_dark", height=300, yaxis_title="Volatility (%)", margin=dict(l=20, r=20, t=20, b=20))
-        st.plotly_chart(fig_vol, use_container_width=True)
-
-        # Export Feature
-        st.markdown("### 📥 Export Analytical Results")
-        csv_data = df_clean[["Close", "Fast_MA", "Slow_MA", "Strategy_Return", "Strategy_Equity", "Dynamic_Vol"]].to_csv()
-        st.download_button(
-            label="Download Backtest Data (CSV)",
-            data=csv_data,
-            file_name=f"{ticker_clean}_quant_backtest.csv",
-            mime="text/csv",
-        )
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=df.index, y=df["Close"], name="Close Price", line=dict(color="white")))
+    fig.add_trace(go.Scatter(x=df.index, y=df["50_DMA"], name="50 DMA", line=dict(color="orange")))
+    fig.add_trace(go.Scatter(x=df.index, y=df["200_DMA"], name="200 DMA", line=dict(color="red")))
+    fig.update_layout(title=f"{selected_asset} Price & Moving Averages", template="plotly_dark", height=450)
+    st.plotly_chart(fig, use_container_width=True)
 
 # ---------------------------------------------------------
-# TAB 2: PORTFOLIO OPTIMIZATION & EFFICIENT FRONTIER
+# FEATURE 2: VOLATILE MARKET CHOP FILTER
 # ---------------------------------------------------------
 with tab2:
-    st.markdown("### 🎯 Markowitz Portfolio Optimization Engine")
-    st.write("Enter any combination of Yahoo Finance tickers separated by commas to calculate optimal risk-adjusted weights.")
+    st.subheader("Market Regime & Sideways Filter")
 
-    default_assets = "SUZLON.NS, RELIANCE.NS, ADANIENT.NS, BTC-USD, GC=F"
-    user_assets = st.text_input("Portfolio Asset Tickers (comma-separated)", value=default_assets)
-    asset_list = [a.strip().upper() for a in user_assets.split(",") if a.strip()]
+    # Flag sideways condition when ADX < 20 or MAs are converging within 1.5% range
+    ma_diff_pct = abs(sma50 - sma200) / price * 100
+    is_sideways = (adx < 20) or (ma_diff_pct < 1.5)
 
-    if len(asset_list) >= 2:
-        with st.spinner("Computing Monte Carlo Efficient Frontier..."):
-            port_prices = yf.download(asset_list, period=time_period)["Close"]
-            if isinstance(port_prices.columns, pd.MultiIndex):
-                port_prices.columns = [col[1] for col in port_prices.columns]
-            
-            port_returns = port_prices.pct_change().dropna()
-            mean_returns = port_returns.mean() * 252
-            cov_matrix = port_returns.cov() * 252
-            num_assets = len(asset_list)
-
-            # Pure NumPy Monte Carlo Optimization
-            num_simulations = 5000
-            weights_record = np.zeros((num_simulations, num_assets))
-            results = np.zeros((3, num_simulations))
-
-            for i in range(num_simulations):
-                w = np.random.random(num_assets)
-                w /= np.sum(w)
-                weights_record[i, :] = w
-                
-                p_ret = np.sum(mean_returns * w)
-                p_std = np.sqrt(np.dot(w.T, np.dot(cov_matrix, w)))
-                p_sharpe = (p_ret - 0.06) / p_std if p_std != 0 else 0
-                
-                results[0, i] = p_std
-                results[1, i] = p_ret
-                results[2, i] = p_sharpe
-
-            max_sharpe_idx = np.argmax(results[2])
-            opt_weights = weights_record[max_sharpe_idx, :]
-            opt_ret = results[1, max_sharpe_idx]
-            opt_std = results[0, max_sharpe_idx]
-            opt_sharpe = results[2, max_sharpe_idx]
-
-            st.markdown("#### 🏆 Optimal Maximum Sharpe Portfolio Allocation")
-            alloc_df = pd.DataFrame({"Asset": asset_list, "Optimal Weight (%)": np.round(opt_weights * 100, 2)})
-            
-            col_left, col_right = st.columns([1, 2])
-            with col_left:
-                st.dataframe(alloc_df, use_container_width=True)
-                st.metric("Expected Annual Return", f"{opt_ret * 100:.2f}%")
-                st.metric("Expected Annual Volatility", f"{opt_std * 100:.2f}%")
-                st.metric("Maximized Sharpe Ratio", f"{opt_sharpe:.2f}")
-
-            with col_right:
-                fig_ef = go.Figure()
-                fig_ef.add_trace(go.Scatter(x=results[0, :], y=results[1, :], mode='markers', marker=dict(color=results[2, :], colorscale='Viridis', showscale=True, colorbar=dict(title="Sharpe")), name="Simulated Portfolios"))
-                fig_ef.add_trace(go.Scatter(x=[opt_std], y=[opt_ret], mode='markers', marker=dict(color='red', size=15, symbol='star'), name="Max Sharpe Portfolio"))
-                fig_ef.update_layout(template="plotly_dark", height=400, xaxis_title="Annualized Volatility (Risk)", yaxis_title="Annualized Expected Return", margin=dict(l=20, r=20, t=20, b=20))
-                st.plotly_chart(fig_ef, use_container_width=True)
+    if is_sideways:
+        st.error("🚫 **SIDEWAYS / CHOPPY MARKET DETECTED**")
+        st.write("Market trend strength is insufficient. Moving average crossovers are prone to false signals (whipsaws). **Recommendation: Stay on Sidelines.**")
     else:
-        st.warning("Please provide at least 2 valid tickers for portfolio optimization.")
+        st.success("✅ **TRENDING MARKET DETECTED**")
+        st.write(f"Trend strength is sufficient (ADX = {adx:.1f}). Crossover signals carry higher statistical validity.")
+
+    st.markdown("#### **Regime Breakdown**")
+    r_col1, r_col2 = st.columns(2)
+    with r_col1:
+        st.info(f"**ADX Reading:** {adx:.2f}\n* (ADX > 25 indicates trend presence; < 20 indicates consolidated range)")
+    with r_col2:
+        st.info(f"**MA Convergence Gap:** {ma_diff_pct:.2f}%\n* (Gaps under 1.5% signal tight consolidation and chop risk)")
 
 # ---------------------------------------------------------
-# TAB 3: MACRO FACTOR ATTRIBUTION (WITH ANY GLOBAL TICKERS)
+# FEATURE 3: STRATEGY BACKTESTING ENGINE
 # ---------------------------------------------------------
 with tab3:
-    st.markdown("### 📊 Factor Attribution ($\alpha / \beta$ Regression)")
-    st.write("Deconstruct target asset returns against broad market indices or benchmarks globally.")
+    st.subheader("Historical Performance Backtest")
+    st.write("Evaluate how a **Multi-Factor Trend Strategy** performed historically compared to Buy & Hold.")
 
-    col_target, col_bench = st.columns(2)
-    with col_target:
-        target_asset = st.selectbox(
-            "Select Target Asset",
-            options=POPULAR_ASSETS,
-            index=1,
-            accept_new_options=True
-        ).upper().strip()
+    # Backtest logic: Long when 50-DMA > 200-DMA AND RSI > 50 AND ADX > 20
+    bt_df = df.dropna().copy()
+    bt_df["Signal"] = 0
+    bt_df.loc[(bt_df["50_DMA"] > bt_df["200_DMA"]) & (bt_df["RSI"] > 50) & (bt_df["ADX"] > 20), "Signal"] = 1
 
-    with col_bench:
-        benchmark_asset = st.selectbox(
-            "Select Benchmark Index",
-            options=POPULAR_BENCHMARKS,
-            index=0,
-            accept_new_options=True
-        ).upper().strip()
+    bt_df["Strategy_Returns"] = bt_df["Close"].pct_change() * bt_df["Signal"].shift(1)
+    bt_df["Benchmark_Returns"] = bt_df["Close"].pct_change()
 
-    if target_asset and benchmark_asset:
-        with st.spinner(f"Analyzing {target_asset} against {benchmark_asset}..."):
-            factor_data = yf.download([target_asset, benchmark_asset], period=time_period)["Close"]
-            if isinstance(factor_data.columns, pd.MultiIndex):
-                factor_data.columns = [col[1] for col in factor_data.columns]
-            
-            factor_returns = factor_data.pct_change().dropna()
-            
-            if len(factor_returns) > 30 and target_asset in factor_returns and benchmark_asset in factor_returns:
-                y = factor_returns[target_asset]
-                x = factor_returns[benchmark_asset]
-                
-                beta, alpha = np.polyfit(x, y, 1)
-                annual_alpha = alpha * 252
-                
-                corr_val = factor_returns.corr().iloc[0, 1]
-                r_squared = corr_val ** 2
+    bt_df["Cum_Strategy"] = (1 + bt_df["Strategy_Returns"].fillna(0)).cumprod()
+    bt_df["Cum_Benchmark"] = (1 + bt_df["Benchmark_Returns"].fillna(0)).cumprod()
 
-                st.markdown("#### 🎯 Regression Coefficients")
-                m1, m2, m3 = st.columns(3)
-                m1.metric("Alpha ($\alpha$, Annualized)", f"{annual_alpha * 100:.2f}%")
-                m2.metric("Market Beta ($\beta$)", f"{beta:.2f}")
-                m3.metric("R-Squared ($R^2$)", f"{r_squared:.2f}")
+    # Metrics
+    total_strat_ret = (bt_df["Cum_Strategy"].iloc[-1] - 1) * 100
+    total_bench_ret = (bt_df["Cum_Benchmark"].iloc[-1] - 1) * 100
 
-                fig_reg = px.scatter(
-                    factor_returns, x=benchmark_asset, y=target_asset,
-                    trendline="ols",
-                    title=f"Linear Regression: {target_asset} vs {benchmark_asset}",
-                    labels={benchmark_asset: f"Benchmark ({benchmark_asset}) Return", target_asset: f"Target ({target_asset}) Return"}
-                )
-                fig_reg.update_layout(template="plotly_dark", height=450)
-                st.plotly_chart(fig_reg, use_container_width=True)
-            else:
-                st.warning("Could not compute regression. Please verify ticker symbols.")
+    trades = bt_df["Signal"].diff().abs()
+    num_trades = int(trades.sum() / 2)
 
-# ---------------------------------------------------------
-# TAB 4: AUTOMATED WEBHOOK ALERTS (LIVE SIGNAL INTEGRATION)
-# ---------------------------------------------------------
-with tab4:
-    st.markdown("### 🔔 Automated Signal Dispatcher")
-    st.write("Stream live computed signals directly to Discord or Telegram.")
+    winning_days = bt_df[bt_df["Strategy_Returns"] > 0]["Strategy_Returns"].count()
+    active_days = bt_df[bt_df["Signal"].shift(1) == 1]["Strategy_Returns"].count()
+    win_rate = (winning_days / active_days * 100) if active_days > 0 else 0
 
-    alert_service = st.radio("Select Alert Platform", ["Discord Webhook", "Telegram Bot"])
-    alert_asset = st.selectbox(
-        "Alert Target Asset",
-        options=POPULAR_ASSETS,
-        index=0,
-        accept_new_options=True
-    ).upper().strip()
+    peak = bt_df["Cum_Strategy"].cummax()
+    drawdown = (bt_df["Cum_Strategy"] - peak) / peak
+    max_drawdown = drawdown.min() * 100
 
-    # Fetch real technical data to compute actual current signal
-    with st.spinner(f"Evaluating live market regime for {alert_asset}..."):
-        alert_df = fetch_data(alert_asset, period="1y")
-        
-        if not alert_df.empty and len(alert_df) >= 200:
-            alert_df["Fast_MA"] = alert_df["Close"].rolling(window=50).mean()
-            alert_df["Slow_MA"] = alert_df["Close"].rolling(window=200).mean()
-            
-            latest_fast = alert_df["Fast_MA"].iloc[-1]
-            latest_slow = alert_df["Slow_MA"].iloc[-1]
-            latest_price = alert_df["Close"].iloc[-1]
+    b_col1, b_col2, b_col3, b_col4 = st.columns(4)
+    b_col1.metric("Strategy Return", f"{total_strat_ret:.2f}%")
+    b_col2.metric("Buy & Hold Return", f"{total_bench_ret:.2f}%")
+    b_col3.metric("Win Rate", f"{win_rate:.1f}%")
+    b_col4.metric("Max Drawdown", f"{max_drawdown:.2f}%")
 
-            if latest_fast > latest_slow:
-                current_signal = "🟢 BULLISH REGIME (HOLD / BUY)"
-            else:
-                current_signal = "🔴 BEARISH REGIME (NO BUY / BEAR)"
-            
-            st.info(f"**Current Status for {alert_asset}:** {current_signal} | **Price:** {latest_price:.2f}")
-        else:
-            current_signal = "⚠️ INSUFFICIENT DATA"
-
-    if alert_service == "Discord Webhook":
-        webhook_url = st.text_input("Discord Webhook URL", type="password")
-        
-        if st.button("🚀 Send Discord Alert"):
-            if webhook_url:
-                payload = {
-                    "content": f"⚡ **QUANT TERMINAL ALERT**\n**Asset:** {alert_asset}\n**Signal:** {current_signal}\n**50-DMA:** {latest_fast:.2f} | **200-DMA:** {latest_slow:.2f}\n**Timestamp:** {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}"
-                }
-                res = requests.post(webhook_url, json=payload)
-                if res.status_code in [200, 204]:
-                    st.success("Discord Alert Dispatched!")
-                else:
-                    st.error(f"Error {res.status_code}: Check Webhook URL")
-            else:
-                st.warning("Please enter a Discord Webhook URL.")
-
-    else:
-        bot_token = st.text_input("Telegram Bot Token (from @BotFather)", type="password")
-        chat_id = st.text_input("Telegram Chat ID (from @userinfobot)")
-        
-        if st.button("🚀 Send Telegram Alert"):
-            if bot_token and chat_id:
-                telegram_url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-                payload = {
-                    "chat_id": chat_id,
-                    "text": f"⚡ **QUANT TERMINAL ALERT**\n**Asset:** {alert_asset}\n**Signal:** {current_signal}\n**50-DMA:** {latest_fast:.2f} | **200-DMA:** {latest_slow:.2f}\n**Timestamp:** {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}",
-                    "parse_mode": "Markdown"
-                }
-                res = requests.post(telegram_url, json=payload)
-                if res.status_code == 200:
-                    st.success("Telegram Alert Dispatched!")
-                else:
-                    st.error(f"Error {res.status_code}: Check Token or Chat ID.")
-            else:
-                st.warning("Please enter both your Bot Token and Chat ID.")
+    # Chart
+    bt_fig = go.Figure()
+    bt_fig.add_trace(go.Scatter(x=bt_df.index, y=bt_df["Cum_Strategy"], name="Multi-Factor Strategy", line=dict(color="cyan")))
+    bt_fig.add_trace(go.Scatter(x=bt_df.index, y=bt_df["Cum_Benchmark"], name="Buy & Hold Benchmark", line=dict(color="gray", dash="dash")))
+    bt_fig.update_layout(title="Cumulative Returns Comparison", template="plotly_dark", height=400)
+    st.plotly_chart(bt_fig, use_container_width=True)
