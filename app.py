@@ -282,11 +282,11 @@ with tab3:
                 st.warning("Could not compute regression. Please verify ticker symbols.")
 
 # ---------------------------------------------------------
-# TAB 4: AUTOMATED WEBHOOK ALERTS (DISCORD & TELEGRAM)
+# TAB 4: AUTOMATED WEBHOOK ALERTS (LIVE SIGNAL INTEGRATION)
 # ---------------------------------------------------------
 with tab4:
     st.markdown("### 🔔 Automated Signal Dispatcher")
-    st.write("Configure real-time webhooks to stream trading signals directly to Discord or Telegram.")
+    st.write("Stream live computed signals directly to Discord or Telegram.")
 
     alert_service = st.radio("Select Alert Platform", ["Discord Webhook", "Telegram Bot"])
     alert_asset = st.selectbox(
@@ -296,13 +296,34 @@ with tab4:
         accept_new_options=True
     ).upper().strip()
 
+    # Fetch real technical data to compute actual current signal
+    with st.spinner(f"Evaluating live market regime for {alert_asset}..."):
+        alert_df = fetch_data(alert_asset, period="1y")
+        
+        if not alert_df.empty and len(alert_df) >= 200:
+            alert_df["Fast_MA"] = alert_df["Close"].rolling(window=50).mean()
+            alert_df["Slow_MA"] = alert_df["Close"].rolling(window=200).mean()
+            
+            latest_fast = alert_df["Fast_MA"].iloc[-1]
+            latest_slow = alert_df["Slow_MA"].iloc[-1]
+            latest_price = alert_df["Close"].iloc[-1]
+
+            if latest_fast > latest_slow:
+                current_signal = "🟢 BULLISH REGIME (HOLD / BUY)"
+            else:
+                current_signal = "🔴 BEARISH REGIME (NO BUY / BEAR)"
+            
+            st.info(f"**Current Status for {alert_asset}:** {current_signal} | **Price:** {latest_price:.2f}")
+        else:
+            current_signal = "⚠️ INSUFFICIENT DATA"
+
     if alert_service == "Discord Webhook":
         webhook_url = st.text_input("Discord Webhook URL", type="password")
         
         if st.button("🚀 Send Discord Alert"):
             if webhook_url:
                 payload = {
-                    "content": f"⚡ **QUANT TERMINAL ALERT**\n**Asset:** {alert_asset}\n**Signal:** BULLISH CROSSOVER (BUY)\n**Timestamp:** {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                    "content": f"⚡ **QUANT TERMINAL ALERT**\n**Asset:** {alert_asset}\n**Signal:** {current_signal}\n**50-DMA:** {latest_fast:.2f} | **200-DMA:** {latest_slow:.2f}\n**Timestamp:** {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}"
                 }
                 res = requests.post(webhook_url, json=payload)
                 if res.status_code in [200, 204]:
@@ -321,7 +342,7 @@ with tab4:
                 telegram_url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
                 payload = {
                     "chat_id": chat_id,
-                    "text": f"⚡ **QUANT TERMINAL ALERT**\n**Asset:** {alert_asset}\n**Signal:** BULLISH CROSSOVER (BUY)\n**Timestamp:** {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}",
+                    "text": f"⚡ **QUANT TERMINAL ALERT**\n**Asset:** {alert_asset}\n**Signal:** {current_signal}\n**50-DMA:** {latest_fast:.2f} | **200-DMA:** {latest_slow:.2f}\n**Timestamp:** {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}",
                     "parse_mode": "Markdown"
                 }
                 res = requests.post(telegram_url, json=payload)
