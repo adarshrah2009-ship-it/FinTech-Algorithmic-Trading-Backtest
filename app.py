@@ -100,12 +100,13 @@ vol_confirm = bool(latest["Volume"] > latest["Volume_MA"])
 # ---------------------------------------------------------
 # TABS
 # ---------------------------------------------------------
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "📊 Multi-Factor Matrix",
     "⚠️ Chop Filter",
     "🧪 Backtest Engine",
-    "🤖 AI Research Agent",
-    "🧮 Risk & ROI Calculator"
+    "🤖 AI Technical Agent",
+    "🧮 Risk & ROI Calculator",
+    "🌐 Macro & News Intelligence"
 ])
 
 # TAB 1: MATRIX
@@ -151,19 +152,19 @@ with tab3:
         b1.metric("Strategy Return", f"{(clean_bt['Cum_Strat'].iloc[-1] - 1)*100:.2f}%")
         b2.metric("Buy & Hold Return", f"{(clean_bt['Cum_Bench'].iloc[-1] - 1)*100:.2f}%")
 
-# TAB 4: AI RESEARCH AGENT
+# TAB 4: AI TECHNICAL AGENT
 with tab4:
-    st.subheader("Ask the AI Analyst (Free via Google Gemini)")
-    st.write("Analyze whether you should **BUY**, **HOLD**, or **CASH OUT** using Google's free API.")
+    st.subheader("Ask the AI Technical Analyst")
+    st.write("Analyze technical metrics via Google's free API.")
 
-    user_api_key = st.text_input("Paste your Google Gemini API Key (starts with AIzaSy...):", type="password")
+    user_api_key = st.text_input("Paste your Google Gemini API Key:", type="password", key="tech_key")
 
-    if st.button("Run Free AI Decision Engine"):
+    if st.button("Run AI Technical Decision Engine"):
         cleaned_key = user_api_key.strip()
         if not cleaned_key:
-            st.warning("Please paste your Google Gemini API Key above to run the AI for free!")
+            st.warning("Please paste your Google Gemini API Key above.")
         else:
-            with st.spinner(f"AI is analyzing market signals for {selected_asset}..."):
+            with st.spinner(f"AI is analyzing technicals for {selected_asset}..."):
                 try:
                     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key={cleaned_key}"
                     headers = {"Content-Type": "application/json"}
@@ -189,12 +190,8 @@ with tab4:
                     """
 
                     payload = {
-                        "contents": [{
-                            "parts": [{"text": prompt_text}]
-                        }],
-                        "generationConfig": {
-                            "response_mime_type": "application/json"
-                        }
+                        "contents": [{"parts": [{"text": prompt_text}]}],
+                        "generationConfig": {"response_mime_type": "application/json"}
                     }
 
                     response = requests.post(url, headers=headers, json=payload, timeout=30)
@@ -240,10 +237,8 @@ with tab5:
         stop_loss_price = st.number_input("Stop Loss Price", min_value=0.01, value=round(price * 0.95, 2), step=1.0)
         take_profit_price = st.number_input("Target Take-Profit Price", min_value=0.01, value=round(price * 1.15, 2), step=1.0)
 
-    # Calculation logic
     risk_per_share = abs(entry_price - stop_loss_price)
     reward_per_share = abs(take_profit_price - entry_price)
-    
     max_capital_risk = account_balance * (risk_per_trade_pct / 100.0)
     
     if risk_per_share > 0:
@@ -276,3 +271,67 @@ with tab5:
             m7.error("Poor Risk-Reward (Risk exceeds reward!)")
     else:
         st.error("Stop Loss Price cannot be equal to the Entry Price.")
+
+# TAB 6: MACRO & NEWS INTELLIGENCE
+with tab6:
+    st.subheader(f"🌐 Real-Time Macro, Policy & News Scanner ({selected_asset})")
+    st.write("Scans live Google News, policy shifts, earnings, and global central bank moves before advising.")
+
+    macro_api_key = st.text_input("Paste your Google Gemini API Key:", type="password", key="macro_key")
+    custom_query = st.text_input(
+        "Custom Policy / Macro Focus Topic (Optional):", 
+        placeholder="e.g. Government policy changes, rate cuts, quarterly earnings, regulatory news"
+    )
+
+    if st.button("Run Live Macro & News Intelligence Search"):
+        cleaned_macro_key = macro_api_key.strip()
+        if not cleaned_macro_key:
+            st.warning("Please paste your Google Gemini API Key above.")
+        else:
+            with st.spinner("AI is scanning live global news and policy feeds..."):
+                try:
+                    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key={cleaned_macro_key}"
+                    headers = {"Content-Type": "application/json"}
+
+                    user_search_topic = custom_query if custom_query.strip() else "latest news earnings macro policies regulatory impact"
+
+                    macro_prompt = f"""
+                    Perform a real-time web search and fundamental audit on asset: '{selected_asset}'.
+                    Focus specifically on: {user_search_topic}.
+
+                    Structure your output using clear markdown formatting as follows:
+                    1. **Recent News & Catalysts**: Summarize top stories or earnings from the past few days/weeks.
+                    2. **Macro & Policy Impacts**: Highlight government decisions, sector regulations, or interest rate policies affecting this asset.
+                    3. **Forward Outlook**: What are the key upside/downside risks coming up?
+                    4. **Macro Verdict**: Summarize if current macro conditions favor buying, holding, or reducing exposure.
+                    """
+
+                    payload = {
+                        "contents": [{"parts": [{"text": macro_prompt}]}],
+                        "tools": [{"google_search": {}}]
+                    }
+
+                    response = requests.post(url, headers=headers, json=payload, timeout=45)
+                    res_data = response.json()
+
+                    if response.status_code != 200:
+                        st.error(f"API Error ({response.status_code}): {res_data.get('error', {}).get('message', 'Unknown Error')}")
+                    else:
+                        candidate = res_data["candidates"][0]
+                        parts = candidate["content"]["parts"]
+                        
+                        full_analysis = ""
+                        for part in parts:
+                            if "text" in part:
+                                full_analysis += part["text"]
+
+                        st.markdown("---")
+                        st.markdown("### 📰 Live Fundamental & Policy Briefing")
+                        st.markdown(full_analysis)
+
+                        # Display groundings / search sources if returned by Gemini
+                        if "groundingMetadata" in candidate and "searchEntryPoint" in candidate["groundingMetadata"]:
+                            st.caption("🔍 Grounded via Google Search Engine")
+
+                except Exception as e:
+                    st.error(f"Error fetching macro news intelligence: {e}")
