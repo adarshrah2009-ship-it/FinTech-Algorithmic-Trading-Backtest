@@ -3,9 +3,4 @@ yfinance
 pandas
 numpy
 plotly
-scipy
 requests
-statsmodels
-matplotlib
-seaborn
-google-genai
