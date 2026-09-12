@@ -189,7 +189,7 @@ with tab4:
                     }}
                     """
 
-                    # Using gemini-2.5-flash model
+                    # Using standard production endpoint: gemini-2.5-flash
                     response = client.models.generate_content(
                         model="gemini-2.5-flash",
                         contents=prompt,
