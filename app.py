@@ -7,8 +7,6 @@ import plotly.graph_objects as go
 import requests
 import streamlit as st
 import yfinance as yf
-from google import genai
-from google.genai import types
 
 # ---------------------------------------------------------
 # 1. PAGE CONFIGURATION
@@ -152,10 +150,10 @@ with tab3:
         b1.metric("Strategy Return", f"{(clean_bt['Cum_Strat'].iloc[-1] - 1)*100:.2f}%")
         b2.metric("Buy & Hold Return", f"{(clean_bt['Cum_Bench'].iloc[-1] - 1)*100:.2f}%")
 
-# TAB 4: AI RESEARCH AGENT (FREE GEMINI API)
+# TAB 4: AI RESEARCH AGENT (DIRECT REST API APPROACH)
 with tab4:
     st.subheader("Ask the AI Analyst (Free via Google Gemini)")
-    st.write("Analyze whether you should **BUY**, **HOLD**, or **CASH OUT** using Google's free AI tier.")
+    st.write("Analyze whether you should **BUY**, **HOLD**, or **CASH OUT** using Google's free API.")
 
     user_api_key = st.text_input("Paste your Google Gemini API Key (starts with AIzaSy...):", type="password")
 
@@ -166,10 +164,12 @@ with tab4:
         else:
             with st.spinner(f"AI is analyzing market signals for {selected_asset}..."):
                 try:
-                    # Initialize Gemini Client
-                    client = genai.Client(api_key=cleaned_key)
-
-                    prompt = f"""
+                    # Direct REST API call
+                    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={cleaned_key}"
+                    
+                    headers = {"Content-Type": "application/json"}
+                    
+                    prompt_text = f"""
                     You are an expert Quantitative Investment Advisor.
                     Analyze this stock: {selected_asset}
                     - Price: {price:.2f}
@@ -189,33 +189,40 @@ with tab4:
                     }}
                     """
 
-                    # Explicit standard model selection
-                    response = client.models.generate_content(
-                        model="gemini-2.5-flash",
-                        contents=prompt,
-                        config=types.GenerateContentConfig(
-                            response_mime_type="application/json",
-                            temperature=0.2,
-                        ),
-                    )
+                    payload = {
+                        "contents": [{
+                            "parts": [{"text": prompt_text}]
+                        }],
+                        "generationConfig": {
+                            "response_mime_type": "application/json",
+                            "temperature": 0.2
+                        }
+                    }
 
-                    result = json.loads(response.text)
-                    
-                    act = str(result.get("action", "HOLD")).upper()
-                    conf = result.get("confidence", 0)
-                    reason = result.get("reasoning", "")
+                    response = requests.post(url, headers=headers, json=payload, timeout=30)
+                    res_data = response.json()
 
-                    st.markdown("---")
-                    col_a, col_b = st.columns(2)
-                    if "BUY" in act:
-                        col_a.success("### Signal: 🟢 **BUY**")
-                    elif "CASH" in act or "SELL" in act:
-                        col_a.error("### Signal: 🔴 **CASH OUT**")
+                    if response.status_code != 200:
+                        st.error(f"API Error ({response.status_code}): {res_data.get('error', {}).get('message', 'Unknown Error')}")
                     else:
-                        col_a.warning("### Signal: 🟡 **HOLD**")
+                        raw_text = res_data["candidates"][0]["content"]["parts"][0]["text"]
+                        result = json.loads(raw_text)
 
-                    col_b.metric("AI Confidence", f"{conf}%")
-                    st.info(f"**AI Rationale:**\n{reason}")
+                        act = str(result.get("action", "HOLD")).upper()
+                        conf = result.get("confidence", 0)
+                        reason = result.get("reasoning", "")
+
+                        st.markdown("---")
+                        col_a, col_b = st.columns(2)
+                        if "BUY" in act:
+                            col_a.success("### Signal: 🟢 **BUY**")
+                        elif "CASH" in act or "SELL" in act:
+                            col_a.error("### Signal: 🔴 **CASH OUT**")
+                        else:
+                            col_a.warning("### Signal: 🟡 **HOLD**")
+
+                        col_b.metric("AI Confidence", f"{conf}%")
+                        st.info(f"**AI Rationale:**\n{reason}")
 
                 except Exception as e:
                     st.error(f"Error calling Gemini API: {e}")
