@@ -151,23 +151,28 @@ with tab3:
         b1.metric("Strategy Return", f"{(clean_bt['Cum_Strat'].iloc[-1] - 1)*100:.2f}%")
         b2.metric("Buy & Hold Return", f"{(clean_bt['Cum_Bench'].iloc[-1] - 1)*100:.2f}%")
 
-# TAB 4: AI RESEARCH AGENT
+import json
+import os
+from google import genai
+from google.genai import types
+
+# TAB 4: AI RESEARCH AGENT (FREE GEMINI API)
 with tab4:
-    st.subheader("Ask the AI Analyst")
-    st.write("Click the button below to ask ChatGPT whether you should **BUY**, **HOLD**, or **CASH OUT** based on live data.")
+    st.subheader("Ask the AI Analyst (Free via Google Gemini)")
+    st.write("Analyze whether you should **BUY**, **HOLD**, or **CASH OUT** using Google's free AI tier.")
 
-    user_api_key = st.text_input("Paste your OpenAI API Key here (starts with sk-...):", type="password")
+    user_api_key = st.text_input("Paste your Google Gemini API Key (starts with AIzaSy...):", type="password")
 
-    if st.button("Run AI Decision Engine"):
+    if st.button("Run Free AI Decision Engine"):
         cleaned_key = user_api_key.strip()
         if not cleaned_key:
-            st.warning("Please paste your OpenAI API Key above to run the AI!")
+            st.warning("Please paste your Google Gemini API Key above to run the AI for free!")
         else:
             with st.spinner(f"AI is analyzing market signals for {selected_asset}..."):
                 try:
-                    client = OpenAI(api_key=cleaned_key)
+                    # Initialize Gemini Client
+                    client = genai.Client(api_key=cleaned_key)
 
-                    # ASCII-clean prompt string
                     prompt = f"""
                     You are an expert Quantitative Investment Advisor.
                     Analyze this stock: {selected_asset}
@@ -188,30 +193,33 @@ with tab4:
                     }}
                     """
 
-                    response = client.chat.completions.create(
-                        model="gpt-4o-mini",
-                        messages=[{"role": "user", "content": prompt}],
-                        temperature=0.2,
-                        response_format={"type": "json_object"}
+                    # Call Gemini 2.5 Flash Model
+                    response = client.models.generate_content(
+                        model="gemini-2.5-flash",
+                        contents=prompt,
+                        config=types.GenerateContentConfig(
+                            response_mime_type="application/json",
+                            temperature=0.2,
+                        ),
                     )
 
-                    result = json.loads(response.choices[0].message.content)
+                    result = json.loads(response.text)
                     
-                    act = result.get("action", "HOLD").upper()
+                    act = str(result.get("action", "HOLD")).upper()
                     conf = result.get("confidence", 0)
                     reason = result.get("reasoning", "")
 
                     st.markdown("---")
                     col_a, col_b = st.columns(2)
                     if "BUY" in act:
-                        col_a.success(f"### Signal: 🟢 **BUY**")
+                        col_a.success("### Signal: 🟢 **BUY**")
                     elif "CASH" in act or "SELL" in act:
-                        col_a.error(f"### Signal: 🔴 **CASH OUT**")
+                        col_a.error("### Signal: 🔴 **CASH OUT**")
                     else:
-                        col_a.warning(f"### Signal: 🟡 **HOLD**")
+                        col_a.warning("### Signal: 🟡 **HOLD**")
 
                     col_b.metric("AI Confidence", f"{conf}%")
                     st.info(f"**AI Rationale:**\n{reason}")
 
                 except Exception as e:
-                    st.error(f"Error calling OpenAI API: {e}")
+                    st.error(f"Error calling Gemini API: {e}")
