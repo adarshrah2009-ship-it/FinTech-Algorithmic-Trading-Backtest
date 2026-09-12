@@ -18,7 +18,7 @@ st.set_page_config(
     page_icon="📈"
 )
 
-st.title("🛡️ Institutional Quant & AI Research Terminal")
+st.title("Institutional Quant & AI Research Terminal")
 
 POPULAR_ASSETS = [
     "SUZLON.NS", "RELIANCE.NS", "TATAMOTORS.NS", "TCS.NS", "INFY.NS", 
@@ -129,9 +129,9 @@ with tab2:
     st.subheader("Market Trend vs Sideways Range")
     ma_diff_pct = abs(sma50 - sma200) / price * 100
     if adx < 20 or ma_diff_pct < 1.5:
-        st.error("🚫 **SIDEWAYS / CHOPPY MARKET** — High risk of false signals!")
+        st.error("SIDEWAYS / CHOPPY MARKET - High risk of false signals!")
     else:
-        st.success("✅ **CLEAR TREND DETECTED** — Signals carry higher accuracy.")
+        st.success("CLEAR TREND DETECTED - Signals carry higher accuracy.")
 
 # TAB 3: BACKTEST
 with tab3:
@@ -153,19 +153,21 @@ with tab3:
 
 # TAB 4: AI RESEARCH AGENT
 with tab4:
-    st.subheader("🤖 Ask the AI Analyst")
+    st.subheader("Ask the AI Analyst")
     st.write("Click the button below to ask ChatGPT whether you should **BUY**, **HOLD**, or **CASH OUT** based on live data.")
 
     user_api_key = st.text_input("Paste your OpenAI API Key here (starts with sk-...):", type="password")
 
-    if st.button("🧠 Run AI Decision Engine"):
-        if not user_api_key:
+    if st.button("Run AI Decision Engine"):
+        cleaned_key = user_api_key.strip()
+        if not cleaned_key:
             st.warning("Please paste your OpenAI API Key above to run the AI!")
         else:
             with st.spinner(f"AI is analyzing market signals for {selected_asset}..."):
                 try:
-                    client = OpenAI(api_key=user_api_key)
+                    client = OpenAI(api_key=cleaned_key)
 
+                    # ASCII-clean prompt string
                     prompt = f"""
                     You are an expert Quantitative Investment Advisor.
                     Analyze this stock: {selected_asset}
@@ -176,11 +178,11 @@ with tab4:
                     - ADX Trend Strength: {adx:.1f}
                     - Technical Regime: {"Bullish" if sma50 > sma200 else "Bearish"}
 
-                    Task: Tell the user if they should "BUY", "CASH_OUT", or "HOLD". Give a confidence score (0-100%) and short reasoning.
+                    Task: Tell the user if they should BUY, CASH_OUT, or HOLD. Give a confidence score from 0 to 100 and a short reasoning.
 
                     Return ONLY a JSON object:
                     {{
-                        "action": "BUY" | "CASH_OUT" | "HOLD",
+                        "action": "BUY or CASH_OUT or HOLD",
                         "confidence": 85,
                         "reasoning": "Your short explanation here."
                     }}
@@ -195,18 +197,18 @@ with tab4:
 
                     result = json.loads(response.choices[0].message.content)
                     
-                    act = result.get("action", "HOLD")
+                    act = result.get("action", "HOLD").upper()
                     conf = result.get("confidence", 0)
                     reason = result.get("reasoning", "")
 
                     st.markdown("---")
                     col_a, col_b = st.columns(2)
-                    if act == "BUY":
-                        col_a.success(f"### Signal: 🟢 **{act}**")
-                    elif act == "CASH_OUT":
-                        col_a.error(f"### Signal: 🔴 **{act}**")
+                    if "BUY" in act:
+                        col_a.success(f"### Signal: 🟢 **BUY**")
+                    elif "CASH" in act or "SELL" in act:
+                        col_a.error(f"### Signal: 🔴 **CASH OUT**")
                     else:
-                        col_a.warning(f"### Signal: 🟡 **{act}**")
+                        col_a.warning(f"### Signal: 🟡 **HOLD**")
 
                     col_b.metric("AI Confidence", f"{conf}%")
                     st.info(f"**AI Rationale:**\n{reason}")
