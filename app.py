@@ -272,7 +272,8 @@ with tab5:
     else:
         st.error("Stop Loss Price cannot be equal to the Entry Price.")
 
-# TAB 6: MACRO & NEWS INTELLIGENCE
+
+# Replace Tab 6 in app.py with this robust error-handling version:
 with tab6:
     st.subheader(f"🌐 Real-Time Macro, Policy & News Scanner ({selected_asset})")
     st.write("Scans live Google News, policy shifts, earnings, and global central bank moves before advising.")
@@ -288,7 +289,7 @@ with tab6:
         if not cleaned_macro_key:
             st.warning("Please paste your Google Gemini API Key above.")
         else:
-            with st.spinner("AI is scanning live global news and policy feeds..."):
+            with st.spinner("AI is scanning global news and policy feeds..."):
                 try:
                     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key={cleaned_macro_key}"
                     headers = {"Content-Type": "application/json"}
@@ -299,13 +300,14 @@ with tab6:
                     Perform a real-time web search and fundamental audit on asset: '{selected_asset}'.
                     Focus specifically on: {user_search_topic}.
 
-                    Structure your output using clear markdown formatting as follows:
-                    1. **Recent News & Catalysts**: Summarize top stories or earnings from the past few days/weeks.
-                    2. **Macro & Policy Impacts**: Highlight government decisions, sector regulations, or interest rate policies affecting this asset.
+                    Structure your output using clear markdown formatting:
+                    1. **Recent News & Catalysts**: Summarize top stories or earnings.
+                    2. **Macro & Policy Impacts**: Highlight government decisions or rate policies.
                     3. **Forward Outlook**: What are the key upside/downside risks coming up?
-                    4. **Macro Verdict**: Summarize if current macro conditions favor buying, holding, or reducing exposure.
+                    4. **Macro Verdict**: Summarize if macro conditions favor buying, holding, or reducing exposure.
                     """
 
+                    # Attempt with Live Google Search
                     payload = {
                         "contents": [{"parts": [{"text": macro_prompt}]}],
                         "tools": [{"google_search": {}}]
@@ -314,24 +316,26 @@ with tab6:
                     response = requests.post(url, headers=headers, json=payload, timeout=45)
                     res_data = response.json()
 
+                    # Fallback if Search Grounding triggers Rate Limit (429)
+                    if response.status_code == 429:
+                        st.warning("⚠️ Live Search rate limit reached. Falling back to Gemini's internal knowledge base...")
+                        payload_fallback = {
+                            "contents": [{"parts": [{"text": macro_prompt}]}]
+                        }
+                        response = requests.post(url, headers=headers, json=payload_fallback, timeout=30)
+                        res_data = response.json()
+
                     if response.status_code != 200:
                         st.error(f"API Error ({response.status_code}): {res_data.get('error', {}).get('message', 'Unknown Error')}")
                     else:
                         candidate = res_data["candidates"][0]
                         parts = candidate["content"]["parts"]
                         
-                        full_analysis = ""
-                        for part in parts:
-                            if "text" in part:
-                                full_analysis += part["text"]
+                        full_analysis = "".join([p["text"] for p in parts if "text" in p])
 
                         st.markdown("---")
-                        st.markdown("### 📰 Live Fundamental & Policy Briefing")
+                        st.markdown("### 📰 Fundamental & Policy Briefing")
                         st.markdown(full_analysis)
-
-                        # Display groundings / search sources if returned by Gemini
-                        if "groundingMetadata" in candidate and "searchEntryPoint" in candidate["groundingMetadata"]:
-                            st.caption("🔍 Grounded via Google Search Engine")
 
                 except Exception as e:
                     st.error(f"Error fetching macro news intelligence: {e}")
