@@ -24,7 +24,6 @@ POPULAR_ASSETS = [
     "ADANIENT.NS", "BTC-USD", "ETH-USD", "GC=F", "AAPL", "NVDA", "TSLA"
 ]
 
-# Sidebar asset picker
 selected_asset = st.sidebar.selectbox(
     "Select Asset Ticker", 
     options=POPULAR_ASSETS,
@@ -33,7 +32,6 @@ selected_asset = st.sidebar.selectbox(
 
 selected_period = st.sidebar.selectbox("Data Horizon", ["1y", "2y", "5y"], index=1)
 
-# Dynamic data loader
 @st.cache_data(ttl=300)
 def fetch_data(symbol, period):
     data = yf.download(symbol, period=period, progress=False)
@@ -54,14 +52,14 @@ def calculate_indicators(df):
     data["50_DMA"] = data["Close"].rolling(50).mean()
     data["200_DMA"] = data["Close"].rolling(200).mean()
 
-    # RSI (14)
+    # RSI
     delta = data["Close"].diff()
     gain = (delta.where(delta > 0, 0)).rolling(14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
     rs = gain / loss
     data["RSI"] = 100 - (100 / (1 + rs))
 
-    # ADX (14)
+    # ADX
     high_diff = data["High"].diff()
     low_diff = -data["Low"].diff()
     pos_dm = np.where((high_diff > low_diff) & (high_diff > 0), high_diff, 0)
@@ -79,7 +77,6 @@ def calculate_indicators(df):
 
     return data
 
-# Fetch data
 df_raw = fetch_data(selected_asset, selected_period)
 
 if df_raw.empty or len(df_raw) < 200:
@@ -88,7 +85,6 @@ if df_raw.empty or len(df_raw) < 200:
 
 df = calculate_indicators(df_raw)
 
-# Latest numbers
 latest = df.iloc[-1]
 price = float(latest["Close"])
 rsi = float(latest["RSI"])
@@ -100,13 +96,14 @@ vol_confirm = bool(latest["Volume"] > latest["Volume_MA"])
 # ---------------------------------------------------------
 # TABS
 # ---------------------------------------------------------
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     "📊 Multi-Factor Matrix",
     "⚠️ Chop Filter",
     "🧪 Backtest Engine",
     "🤖 AI Technical Agent",
     "🧮 Risk & ROI Calculator",
-    "🌐 Macro & News Intelligence"
+    "🌐 Macro & News Intelligence",
+    "🎲 Monte Carlo Simulation"
 ])
 
 # TAB 1: MATRIX
@@ -155,8 +152,6 @@ with tab3:
 # TAB 4: AI TECHNICAL AGENT
 with tab4:
     st.subheader("Ask the AI Technical Analyst")
-    st.write("Analyze technical metrics via Google's free API.")
-
     user_api_key = st.text_input("Paste your Google Gemini API Key:", type="password", key="tech_key")
 
     if st.button("Run AI Technical Decision Engine"):
@@ -179,14 +174,7 @@ with tab4:
                     - ADX Trend Strength: {adx:.1f}
                     - Technical Regime: {"Bullish" if sma50 > sma200 else "Bearish"}
 
-                    Task: Tell the user if they should BUY, CASH_OUT, or HOLD. Give a confidence score from 0 to 100 and a short reasoning.
-
-                    Return ONLY a JSON object:
-                    {{
-                        "action": "BUY or CASH_OUT or HOLD",
-                        "confidence": 85,
-                        "reasoning": "Your short explanation here."
-                    }}
+                    Task: Tell the user if they should BUY, CASH_OUT, or HOLD. Return JSON with action, confidence, reasoning.
                     """
 
                     payload = {
@@ -225,14 +213,11 @@ with tab4:
 # TAB 5: RISK & ROI CALCULATOR
 with tab5:
     st.subheader(f"Position Sizing & Return Calculator ({selected_asset})")
-    
     col_input1, col_input2 = st.columns(2)
-    
     with col_input1:
-        account_balance = st.number_input("Total Portfolio / Trading Capital ($ / ₹)", min_value=100.0, value=10000.0, step=500.0)
+        account_balance = st.number_input("Total Portfolio / Trading Capital", min_value=100.0, value=10000.0, step=500.0)
         risk_per_trade_pct = st.number_input("Risk Per Trade (%)", min_value=0.1, max_value=100.0, value=2.0, step=0.5)
         entry_price = st.number_input("Planned Entry Price", min_value=0.01, value=price, step=1.0)
-        
     with col_input2:
         stop_loss_price = st.number_input("Stop Loss Price", min_value=0.01, value=round(price * 0.95, 2), step=1.0)
         take_profit_price = st.number_input("Target Take-Profit Price", min_value=0.01, value=round(price * 1.15, 2), step=1.0)
@@ -244,84 +229,45 @@ with tab5:
     if risk_per_share > 0:
         position_size_units = max_capital_risk / risk_per_share
         total_position_value = position_size_units * entry_price
-        
         potential_profit = position_size_units * reward_per_share
         roi_on_capital = (potential_profit / account_balance) * 100.0
-        roi_on_position = (reward_per_share / entry_price) * 100.0
         risk_reward_ratio = reward_per_share / risk_per_share
         
         st.markdown("---")
-        st.markdown("### 📊 Trade Metrics Breakdown")
-        
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("Recommended Position Size", f"{position_size_units:.2f} Units")
         m2.metric("Total Investment Value", f"{total_position_value:.2f}")
-        m3.metric("Max Dollar/Rupee Risk", f"{max_capital_risk:.2f}")
-        m4.metric("Risk-to-Reward Ratio", f"1 : {risk_reward_ratio:.2f}")
-        
-        m5, m6, m7 = st.columns(3)
-        m5.metric("Potential Profit", f"{potential_profit:.2f}", delta=f"{roi_on_position:.2f}% (Price)")
-        m6.metric("Expected Portfolio ROI", f"{roi_on_capital:.2f}%")
-        
-        if risk_reward_ratio >= 2.0:
-            m7.success("Excellent Risk-Reward Ratio (>= 1:2)")
-        elif risk_reward_ratio >= 1.0:
-            m7.warning("Moderate Risk-Reward Ratio (1:1 - 1:2)")
-        else:
-            m7.error("Poor Risk-Reward (Risk exceeds reward!)")
-    else:
-        st.error("Stop Loss Price cannot be equal to the Entry Price.")
+        m3.metric("Max Capital Risk", f"{max_capital_risk:.2f}")
+        m4.metric("Risk-to-Reward", f"1 : {risk_reward_ratio:.2f}")
 
-
-# Replace Tab 6 in app.py with this robust error-handling version:
+# TAB 6: MACRO & NEWS INTELLIGENCE
 with tab6:
-    st.subheader(f"🌐 Real-Time Macro, Policy & News Scanner ({selected_asset})")
-    st.write("Scans live Google News, policy shifts, earnings, and global central bank moves before advising.")
-
+    st.subheader(f"🌐 Real-Time Macro & Policy Scanner ({selected_asset})")
     macro_api_key = st.text_input("Paste your Google Gemini API Key:", type="password", key="macro_key")
-    custom_query = st.text_input(
-        "Custom Policy / Macro Focus Topic (Optional):", 
-        placeholder="e.g. Government policy changes, rate cuts, quarterly earnings, regulatory news"
-    )
+    custom_query = st.text_input("Custom Policy Topic:", placeholder="e.g. Rate cuts, regulatory policies, earnings")
 
-    if st.button("Run Live Macro & News Intelligence Search"):
+    if st.button("Run Live Macro Search"):
         cleaned_macro_key = macro_api_key.strip()
         if not cleaned_macro_key:
             st.warning("Please paste your Google Gemini API Key above.")
         else:
-            with st.spinner("AI is scanning global news and policy feeds..."):
+            with st.spinner("AI is scanning news & macro policy..."):
                 try:
                     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key={cleaned_macro_key}"
                     headers = {"Content-Type": "application/json"}
+                    user_topic = custom_query if custom_query.strip() else "latest news earnings macro policies"
+                    macro_prompt = f"Audit '{selected_asset}' focusing on {user_topic}. Provide news, policy impact, and macro verdict."
 
-                    user_search_topic = custom_query if custom_query.strip() else "latest news earnings macro policies regulatory impact"
-
-                    macro_prompt = f"""
-                    Perform a real-time web search and fundamental audit on asset: '{selected_asset}'.
-                    Focus specifically on: {user_search_topic}.
-
-                    Structure your output using clear markdown formatting:
-                    1. **Recent News & Catalysts**: Summarize top stories or earnings.
-                    2. **Macro & Policy Impacts**: Highlight government decisions or rate policies.
-                    3. **Forward Outlook**: What are the key upside/downside risks coming up?
-                    4. **Macro Verdict**: Summarize if macro conditions favor buying, holding, or reducing exposure.
-                    """
-
-                    # Attempt with Live Google Search
                     payload = {
                         "contents": [{"parts": [{"text": macro_prompt}]}],
                         "tools": [{"google_search": {}}]
                     }
-
                     response = requests.post(url, headers=headers, json=payload, timeout=45)
                     res_data = response.json()
 
-                    # Fallback if Search Grounding triggers Rate Limit (429)
                     if response.status_code == 429:
-                        st.warning("⚠️ Live Search rate limit reached. Falling back to Gemini's internal knowledge base...")
-                        payload_fallback = {
-                            "contents": [{"parts": [{"text": macro_prompt}]}]
-                        }
+                        st.warning("⚠️ Live Search rate limit reached. Falling back to Gemini knowledge base...")
+                        payload_fallback = {"contents": [{"parts": [{"text": macro_prompt}]}]}
                         response = requests.post(url, headers=headers, json=payload_fallback, timeout=30)
                         res_data = response.json()
 
@@ -330,12 +276,68 @@ with tab6:
                     else:
                         candidate = res_data["candidates"][0]
                         parts = candidate["content"]["parts"]
-                        
                         full_analysis = "".join([p["text"] for p in parts if "text" in p])
-
                         st.markdown("---")
-                        st.markdown("### 📰 Fundamental & Policy Briefing")
                         st.markdown(full_analysis)
-
                 except Exception as e:
-                    st.error(f"Error fetching macro news intelligence: {e}")
+                    st.error(f"Error: {e}")
+
+# TAB 7: MONTE CARLO SIMULATION
+with tab7:
+    st.subheader(f"🎲 Geometric Brownian Motion Monte Carlo Simulation ({selected_asset})")
+    st.write("Simulates thousands of stochastic future price paths based on historical daily log returns and volatility.")
+
+    mc_col1, mc_col2, mc_col3 = st.columns(3)
+    with mc_col1:
+        num_simulations = st.slider("Number of Simulations", min_value=100, max_value=2000, value=500, step=100)
+    with mc_col2:
+        forecast_days = st.slider("Forecast Horizon (Trading Days)", min_value=10, max_value=252, value=60, step=10)
+    with mc_col3:
+        confidence_interval = st.selectbox("Confidence Bands", [90, 95, 99], index=1)
+
+    log_returns = np.log(df["Close"] / df["Close"].shift(1)).dropna()
+    u = log_returns.mean()
+    var = log_returns.var()
+    drift = u - (0.5 * var)
+    stdev = log_returns.std()
+
+    # Generate normal distribution random variables
+    daily_returns = np.exp(drift + stdev * np.random.normal(size=(forecast_days, num_simulations)))
+    
+    price_paths = np.zeros_like(daily_returns)
+    price_paths[0] = price
+    
+    for t in range(1, forecast_days):
+        price_paths[t] = price_paths[t - 1] * daily_returns[t]
+
+    ending_prices = price_paths[-1]
+    mean_ending_price = np.mean(ending_prices)
+    median_ending_price = np.median(ending_prices)
+    
+    lower_pct = (100 - confidence_interval) / 2
+    upper_pct = 100 - lower_pct
+    
+    lower_bound = np.percentile(ending_prices, lower_pct)
+    upper_bound = np.percentile(ending_prices, upper_pct)
+
+    # Plot paths
+    mc_fig = go.Figure()
+    
+    # Add a sample of individual path lines
+    for i in range(min(num_simulations, 100)):
+        mc_fig.add_trace(go.Scatter(y=price_paths[:, i], mode='lines', line=dict(width=0.5, color='rgba(150, 150, 150, 0.15)'), showlegend=False))
+
+    mc_fig.add_trace(go.Scatter(y=np.mean(price_paths, axis=1), mode='lines', name='Mean Path', line=dict(color='cyan', width=3)))
+    mc_fig.add_trace(go.Scatter(y=np.percentile(price_paths, upper_pct, axis=1), mode='lines', name=f'Upper {upper_pct:.1f}%', line=dict(color='green', dash='dash')))
+    mc_fig.add_trace(go.Scatter(y=np.percentile(price_paths, lower_pct, axis=1), mode='lines', name=f'Lower {lower_pct:.1f}%', line=dict(color='red', dash='dash')))
+
+    mc_fig.update_layout(template="plotly_dark", height=450, title=f"Monte Carlo Forecast ({forecast_days} Days)", xaxis_title="Days", yaxis_title="Price")
+    st.plotly_chart(mc_fig, use_container_width=True)
+
+    st.markdown("---")
+    st.markdown("### 📊 Simulation Summary")
+    p1, p2, p3, p4 = st.columns(4)
+    p1.metric("Starting Price", f"{price:.2f}")
+    p2.metric("Expected Mean Price", f"{mean_ending_price:.2f}", delta=f"{((mean_ending_price - price) / price) * 100:.2f}%")
+    p3.metric(f"Worst Case ({lower_pct:.1f}%)", f"{lower_bound:.2f}")
+    p4.metric(f"Best Case ({upper_pct:.1f}%)", f"{upper_bound:.2f}")
