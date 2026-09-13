@@ -1,3 +1,4 @@
+import base64
 import json
 import os
 import numpy as np
@@ -7,6 +8,7 @@ import plotly.graph_objects as go
 import requests
 import streamlit as st
 import yfinance as yf
+from fpdf import FPDF
 
 # ---------------------------------------------------------
 # 1. PAGE & SIDEBAR CONFIGURATION
@@ -27,7 +29,6 @@ POPULAR_ASSETS = [
 selected_asset = st.sidebar.selectbox("Select Asset Ticker", options=POPULAR_ASSETS, accept_new_options=True).upper().strip()
 selected_period = st.sidebar.selectbox("Data Horizon", ["1y", "2y", "5y"], index=1)
 
-# Single Global API Key Input
 st.sidebar.markdown("---")
 global_api_key = st.sidebar.text_input("🔑 Gemini API Key", type="password", help="Enter once to power AI features across all tabs.")
 
@@ -91,21 +92,74 @@ sma200 = float(latest["200_DMA"])
 vol_confirm = bool(latest["Volume"] > latest["Volume_MA"])
 
 # ---------------------------------------------------------
-# CLEANER 5-TAB NAVIGATION
+# PDF REPORT GENERATOR CLASS
 # ---------------------------------------------------------
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
+class TerminalPDF(FPDF):
+    def header(self):
+        self.set_font('Arial', 'B', 15)
+        self.set_text_color(0, 102, 204)
+        self.cell(0, 10, 'PRO QUANT TERMINAL - RESEARCH BRIEFING', 0, 1, 'C')
+        self.set_font('Arial', 'I', 9)
+        self.set_text_color(100, 100, 100)
+        self.cell(0, 5, 'Automated Quantitative & AI Market Audit Report', 0, 1, 'C')
+        self.ln(5)
+
+    def footer(self):
+        self.set_y(-15)
+        self.set_font('Arial', 'I', 8)
+        self.set_text_color(128, 128, 128)
+        self.cell(0, 10, f'Page {self.page_no()}', 0, 0, 'C')
+
+def create_pdf_report(asset, price, rsi, adx, var_95, cvar_95, ai_signal, ai_conf, ai_reason, mc_prob, mc_target):
+    pdf = TerminalPDF()
+    pdf.add_page()
+    
+    pdf.set_font("Arial", "B", 12)
+    pdf.cell(0, 8, f"Asset Target: {asset}", 0, 1)
+    pdf.set_font("Arial", "", 10)
+    pdf.cell(0, 6, f"Current Market Price: {price:.2f}", 0, 1)
+    pdf.ln(4)
+    
+    pdf.set_font("Arial", "B", 11)
+    pdf.cell(0, 7, "1. Technical Indicators & Risk Assessment", 0, 1)
+    pdf.set_font("Arial", "", 10)
+    pdf.cell(0, 5, f" - RSI (14): {rsi:.1f}", 0, 1)
+    pdf.cell(0, 5, f" - ADX Trend Strength: {adx:.1f}", 0, 1)
+    pdf.cell(0, 5, f" - 1-Day Value at Risk (95% VaR): -{var_95:.2f}%", 0, 1)
+    pdf.cell(0, 5, f" - Expected Shortfall (95% CVaR): -{cvar_95:.2f}%", 0, 1)
+    pdf.ln(4)
+
+    pdf.set_font("Arial", "B", 11)
+    pdf.cell(0, 7, "2. Gemini AI Intelligence Evaluation", 0, 1)
+    pdf.set_font("Arial", "", 10)
+    pdf.cell(0, 5, f" - AI Signal Decision: {ai_signal} ({ai_conf}% Confidence)", 0, 1)
+    pdf.multi_cell(0, 5, f" - Rationale: {ai_reason}")
+    pdf.ln(4)
+
+    pdf.set_font("Arial", "B", 11)
+    pdf.cell(0, 7, "3. Monte Carlo Stochastic Forecast", 0, 1)
+    pdf.set_font("Arial", "", 10)
+    pdf.cell(0, 5, f" - Target Price Threshold: {mc_target:.2f}", 0, 1)
+    pdf.cell(0, 5, f" - Probability of Success: {mc_prob:.1f}%", 0, 1)
+    
+    return pdf.output(dest='S').encode('latin1', errors='replace')
+
+# ---------------------------------------------------------
+# TABS
+# ---------------------------------------------------------
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "📊 Market Matrix & Chop Audit",
     "🧪 Strategy Backtest",
     "🤖 AI Technical Signal",
-    "🧮 Risk & Position Sizer",
-    "🎲 AI Monte Carlo Engine"
+    "🧮 Value at Risk & Position Sizer",
+    "🎲 AI Monte Carlo Engine",
+    "📄 Export Intelligence PDF"
 ])
 
-# TAB 1: MATRIX + CHOP FILTER COMBINED
+# TAB 1: MATRIX + CHOP FILTER
 with tab1:
     st.subheader(f"Technical Scorecard ({selected_asset})")
     
-    # Chop Filter Warning Box directly on top
     ma_diff_pct = abs(sma50 - sma200) / price * 100
     if adx < 20 or ma_diff_pct < 1.5:
         st.error("⚠️ **SIDEWAYS / CHOPPY MARKET:** High risk of false breakouts. Trade with caution.")
@@ -181,6 +235,10 @@ with tab3:
                         conf = result.get("confidence", 0)
                         reason = result.get("reasoning", "")
 
+                        st.session_state["ai_signal"] = act
+                        st.session_state["ai_conf"] = conf
+                        st.session_state["ai_reason"] = reason
+
                         st.markdown("---")
                         col_a, col_b = st.columns(2)
                         if "BUY" in act:
@@ -197,9 +255,29 @@ with tab3:
                 except Exception as e:
                     st.error(f"Error: {e}")
 
-# TAB 4: RISK & POSITION SIZER
+# TAB 4: RISK, POSITION SIZER & VaR
 with tab4:
-    st.subheader(f"Position Sizing Calculator ({selected_asset})")
+    st.subheader(f"Value at Risk (VaR) & Position Sizing ({selected_asset})")
+    
+    # Value at Risk (VaR) & Expected Shortfall (CVaR) Calculations
+    daily_returns = df["Close"].pct_change().dropna()
+    var_95_pct = float(np.percentile(daily_returns, 5) * -100.0)
+    var_99_pct = float(np.percentile(daily_returns, 1) * -100.0)
+    
+    tail_returns_95 = daily_returns[daily_returns <= np.percentile(daily_returns, 5)]
+    cvar_95_pct = float(tail_returns_95.mean() * -100.0)
+
+    st.session_state["var_95"] = var_95_pct
+    st.session_state["cvar_95"] = cvar_95_pct
+
+    st.markdown("### 🛡️ Institutional Risk Tail Analysis (1-Day Horizon)")
+    r1, r2, r3 = st.columns(3)
+    r1.metric("95% Value at Risk (VaR)", f"-{var_95_pct:.2f}%", help="95% confident that the 1-day portfolio loss will not exceed this percentage.")
+    r2.metric("99% Value at Risk (VaR)", f"-{var_99_pct:.2f}%", help="99% confident that the 1-day portfolio loss will not exceed this percentage.")
+    r3.metric("95% Expected Shortfall (CVaR)", f"-{cvar_95_pct:.2f}%", help="The average percentage loss when losses exceed the 95% VaR threshold.")
+
+    st.markdown("---")
+    st.markdown("### 🧮 Dynamic Position Sizing")
     col_input1, col_input2 = st.columns(2)
     with col_input1:
         account_balance = st.number_input("Total Trading Capital", min_value=100.0, value=10000.0, step=500.0)
@@ -218,7 +296,6 @@ with tab4:
         total_position_value = position_size_units * entry_price
         risk_reward_ratio = reward_per_share / risk_per_share
         
-        st.markdown("---")
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("Recommended Units", f"{position_size_units:.2f}")
         m2.metric("Total Order Value", f"{total_position_value:.2f}")
@@ -235,7 +312,7 @@ with tab5:
     with mc_col2:
         target_price = st.number_input("Target Price to Evaluate", min_value=0.01, value=round(price * 1.15, 2), step=10.0)
 
-    num_simulations = 500  # Hardcoded for fast performance
+    num_simulations = 500
 
     if st.button("Run AI Monte Carlo Engine"):
         cleaned_mc_key = global_api_key.strip()
@@ -260,7 +337,7 @@ with tab5:
                     {{
                         "drift_multiplier": 1.15,
                         "volatility_multiplier": 1.05,
-                        "reasoning": "Sustained ETF inflows and monetary policy easing provide a tailwind."
+                        "reasoning": "Sustained institutional momentum and supportive macro factors provide a tailwind."
                     }}
                     """
 
@@ -291,7 +368,6 @@ with tab5:
                 except Exception as e:
                     st.warning(f"Running pure statistical Monte Carlo model without AI adjustments. (Notice: {e})")
 
-        # Run GBM Monte Carlo
         adjusted_u = base_u * drift_multiplier
         adjusted_stdev = base_stdev * vol_multiplier
         var = adjusted_stdev ** 2
@@ -309,7 +385,9 @@ with tab5:
         successful_paths = np.sum(ending_prices >= target_price)
         prob_success = (successful_paths / num_simulations) * 100.0
 
-        # Plot Chart
+        st.session_state["mc_prob"] = prob_success
+        st.session_state["mc_target"] = target_price
+
         mc_fig = go.Figure()
         for i in range(min(num_simulations, 80)):
             mc_fig.add_trace(go.Scatter(y=price_paths[:, i], mode='lines', line=dict(width=0.5, color='rgba(150, 150, 150, 0.15)'), showlegend=False))
@@ -326,3 +404,42 @@ with tab5:
         p2.metric("Target Price", f"{target_price:.2f}")
         p3.metric("Probability of Success", f"{prob_success:.1f}%")
         p4.metric("AI Mean Price Horizon", f"{mean_ending_price:.2f}", delta=f"{((mean_ending_price - price) / price) * 100:.2f}%")
+
+# TAB 6: PDF EXPORT ENGINE
+with tab6:
+    st.subheader("📄 Generate Institutional PDF Research Briefing")
+    st.write("Exports the active technical metrics, Value at Risk calculations, AI decision engine outputs, and Monte Carlo probabilities into a single PDF document.")
+
+    ai_sig = st.session_state.get("ai_signal", "N/A (Run Tab 3)")
+    ai_conf = st.session_state.get("ai_conf", 0)
+    ai_reason = st.session_state.get("ai_reason", "AI technical analysis has not been executed yet.")
+    mc_prob = st.session_state.get("mc_prob", 0.0)
+    mc_target = st.session_state.get("mc_target", price * 1.15)
+    var_95 = st.session_state.get("var_95", var_95_pct)
+    cvar_95 = st.session_state.get("cvar_95", cvar_95_pct)
+
+    if st.button("Compile PDF Intelligence Report"):
+        try:
+            pdf_bytes = create_pdf_report(
+                asset=selected_asset,
+                price=price,
+                rsi=rsi,
+                adx=adx,
+                var_95=var_95,
+                cvar_95=cvar_95,
+                ai_signal=ai_sig,
+                ai_conf=ai_conf,
+                ai_reason=ai_reason,
+                mc_prob=mc_prob,
+                mc_target=mc_target
+            )
+            
+            st.success("PDF compiled successfully!")
+            st.download_button(
+                label="📥 Download PDF Intelligence Report",
+                data=pdf_bytes,
+                file_name=f"{selected_asset}_Research_Report.pdf",
+                mime="application/pdf"
+            )
+        except Exception as e:
+            st.error(f"Failed to generate PDF report: {e}")
