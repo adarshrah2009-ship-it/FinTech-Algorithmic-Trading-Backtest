@@ -282,62 +282,117 @@ with tab6:
                 except Exception as e:
                     st.error(f"Error: {e}")
 
-# TAB 7: MONTE CARLO SIMULATION
+# Replace Tab 7 in your app.py with this Hybrid AI + Monte Carlo implementation:
+
 with tab7:
-    st.subheader(f"🎲 Geometric Brownian Motion Monte Carlo Simulation ({selected_asset})")
-    st.write("Simulates thousands of stochastic future price paths based on historical daily log returns and volatility.")
+    st.subheader(f"🎲 AI-Assisted Monte Carlo Engine ({selected_asset})")
+    st.write("Combines live Google Search policy audits with stochastic Geometric Brownian Motion to calculate realistic probability distributions.")
+
+    mc_api_key = st.text_input("Paste your Google Gemini API Key:", type="password", key="mc_key")
 
     mc_col1, mc_col2, mc_col3 = st.columns(3)
     with mc_col1:
-        num_simulations = st.slider("Number of Simulations", min_value=100, max_value=2000, value=500, step=100)
+        num_simulations = st.slider("Simulations", min_value=100, max_value=2000, value=500, step=100)
     with mc_col2:
-        forecast_days = st.slider("Forecast Horizon (Trading Days)", min_value=10, max_value=252, value=60, step=10)
+        forecast_days = st.slider("Trading Days Horizon", min_value=10, max_value=252, value=60, step=10)
     with mc_col3:
-        confidence_interval = st.selectbox("Confidence Bands", [90, 95, 99], index=1)
+        target_price = st.number_input("Target Price to Evaluate", min_value=0.01, value=round(price * 1.15, 2), step=1.0)
 
-    log_returns = np.log(df["Close"] / df["Close"].shift(1)).dropna()
-    u = log_returns.mean()
-    var = log_returns.var()
-    drift = u - (0.5 * var)
-    stdev = log_returns.std()
+    if st.button("Run AI-Augmented Monte Carlo Simulation"):
+        cleaned_mc_key = mc_api_key.strip()
+        
+        # Default baseline stats from historical data
+        log_returns = np.log(df["Close"] / df["Close"].shift(1)).dropna()
+        base_u = float(log_returns.mean())
+        base_stdev = float(log_returns.std())
+        
+        drift_multiplier = 1.0
+        vol_multiplier = 1.0
+        ai_policy_summary = "Using baseline historical metrics without AI macro adjustment."
 
-    # Generate normal distribution random variables
-    daily_returns = np.exp(drift + stdev * np.random.normal(size=(forecast_days, num_simulations)))
-    
-    price_paths = np.zeros_like(daily_returns)
-    price_paths[0] = price
-    
-    for t in range(1, forecast_days):
-        price_paths[t] = price_paths[t - 1] * daily_returns[t]
+        if cleaned_mc_key:
+            with st.spinner("AI is evaluating live global news and policy factors to adjust Monte Carlo parameters..."):
+                try:
+                    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key={cleaned_mc_key}"
+                    headers = {"Content-Type": "application/json"}
+                    
+                    mc_prompt = f"""
+                    Perform a quick news and policy check for asset: '{selected_asset}'.
+                    Determine if near-term news, government policy, earnings, or interest rates present a major TAILWIND (bullish), HEADWIND (bearish), or HIGH UNCERTAINTY.
 
-    ending_prices = price_paths[-1]
-    mean_ending_price = np.mean(ending_prices)
-    median_ending_price = np.median(ending_prices)
-    
-    lower_pct = (100 - confidence_interval) / 2
-    upper_pct = 100 - lower_pct
-    
-    lower_bound = np.percentile(ending_prices, lower_pct)
-    upper_bound = np.percentile(ending_prices, upper_pct)
+                    Return ONLY a JSON object:
+                    {{
+                        "drift_multiplier": 1.2,  // 1.0 = normal, >1.0 for bullish policy, <1.0 for bearish policy
+                        "volatility_multiplier": 1.1, // 1.0 = normal, >1.0 if high uncertainty/regulatory risk
+                        "reasoning": "Short 2-sentence summary of the news and policy impact."
+                    }}
+                    """
 
-    # Plot paths
-    mc_fig = go.Figure()
-    
-    # Add a sample of individual path lines
-    for i in range(min(num_simulations, 100)):
-        mc_fig.add_trace(go.Scatter(y=price_paths[:, i], mode='lines', line=dict(width=0.5, color='rgba(150, 150, 150, 0.15)'), showlegend=False))
+                    payload = {
+                        "contents": [{"parts": [{"text": mc_prompt}]}],
+                        "tools": [{"google_search": {}}],
+                        "generationConfig": {"response_mime_type": "application/json"}
+                    }
 
-    mc_fig.add_trace(go.Scatter(y=np.mean(price_paths, axis=1), mode='lines', name='Mean Path', line=dict(color='cyan', width=3)))
-    mc_fig.add_trace(go.Scatter(y=np.percentile(price_paths, upper_pct, axis=1), mode='lines', name=f'Upper {upper_pct:.1f}%', line=dict(color='green', dash='dash')))
-    mc_fig.add_trace(go.Scatter(y=np.percentile(price_paths, lower_pct, axis=1), mode='lines', name=f'Lower {lower_pct:.1f}%', line=dict(color='red', dash='dash')))
+                    response = requests.post(url, headers=headers, json=payload, timeout=30)
+                    
+                    # Fallback if search rate limit (429) triggers
+                    if response.status_code == 429:
+                        payload_fallback = {
+                            "contents": [{"parts": [{"text": mc_prompt}]}],
+                            "generationConfig": {"response_mime_type": "application/json"}
+                        }
+                        response = requests.post(url, headers=headers, json=payload_fallback, timeout=30)
 
-    mc_fig.update_layout(template="plotly_dark", height=450, title=f"Monte Carlo Forecast ({forecast_days} Days)", xaxis_title="Days", yaxis_title="Price")
-    st.plotly_chart(mc_fig, use_container_width=True)
+                    if response.status_code == 200:
+                        res_data = response.json()
+                        raw_json = res_data["candidates"][0]["content"]["parts"][0]["text"]
+                        mc_ai_res = json.loads(raw_json)
+                        
+                        drift_multiplier = float(mc_ai_res.get("drift_multiplier", 1.0))
+                        vol_multiplier = float(mc_ai_res.get("volatility_multiplier", 1.0))
+                        ai_policy_summary = mc_ai_res.get("reasoning", "")
+                        st.success(f"**AI Macro Parameter Adjustments Applied!**\n\n*Rationale:* {ai_policy_summary}")
+                except Exception as e:
+                    st.warning(f"Could not fetch AI adjustments due to key error or rate limit. Running pure statistical model instead. (Error: {e})")
 
-    st.markdown("---")
-    st.markdown("### 📊 Simulation Summary")
-    p1, p2, p3, p4 = st.columns(4)
-    p1.metric("Starting Price", f"{price:.2f}")
-    p2.metric("Expected Mean Price", f"{mean_ending_price:.2f}", delta=f"{((mean_ending_price - price) / price) * 100:.2f}%")
-    p3.metric(f"Worst Case ({lower_pct:.1f}%)", f"{lower_bound:.2f}")
-    p4.metric(f"Best Case ({upper_pct:.1f}%)", f"{upper_bound:.2f}")
+        # Adjust parameters based on AI reasoning
+        adjusted_u = base_u * drift_multiplier
+        adjusted_stdev = base_stdev * vol_multiplier
+        var = adjusted_stdev ** 2
+        drift = adjusted_u - (0.5 * var)
+
+        # Run Stochastic Geometric Brownian Motion
+        daily_returns = np.exp(drift + adjusted_stdev * np.random.normal(size=(forecast_days, num_simulations)))
+        price_paths = np.zeros_like(daily_returns)
+        price_paths[0] = price
+
+        for t in range(1, forecast_days):
+            price_paths[t] = price_paths[t - 1] * daily_returns[t]
+
+        ending_prices = price_paths[-1]
+        mean_ending_price = np.mean(ending_prices)
+        
+        # Calculate empirical probability of reaching target price
+        successful_paths = np.sum(ending_prices >= target_price)
+        prob_success = (successful_paths / num_simulations) * 100.0
+
+        # Render Chart
+        mc_fig = go.Figure()
+        for i in range(min(num_simulations, 80)):
+            mc_fig.add_trace(go.Scatter(y=price_paths[:, i], mode='lines', line=dict(width=0.5, color='rgba(150, 150, 150, 0.15)'), showlegend=False))
+
+        mc_fig.add_trace(go.Scatter(y=np.mean(price_paths, axis=1), mode='lines', name='AI Expected Mean Path', line=dict(color='cyan', width=3)))
+        mc_fig.add_trace(go.Scatter(y=[target_price] * forecast_days, mode='lines', name=f'Target Price ({target_price})', line=dict(color='yellow', dash='dash')))
+
+        mc_fig.update_layout(template="plotly_dark", height=450, title=f"AI Stochastic Projection ({forecast_days} Trading Days)", xaxis_title="Days", yaxis_title="Price")
+        st.plotly_chart(mc_fig, use_container_width=True)
+
+        # Output Summary Metrics
+        st.markdown("---")
+        st.markdown("### 📊 AI Probability Analysis")
+        p1, p2, p3, p4 = st.columns(4)
+        p1.metric("Current Price", f"{price:.2f}")
+        p2.metric("Target Price", f"{target_price:.2f}")
+        p3.metric("Probability of Hitting Target", f"{prob_success:.1f}%")
+        p4.metric("AI Mean Price Horizon", f"{mean_ending_price:.2f}", delta=f"{((mean_ending_price - price) / price) * 100:.2f}%")
