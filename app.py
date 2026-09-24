@@ -123,8 +123,8 @@ with tab3:
     else:
         try:
             genai.configure(api_key=api_key)
-            # Uses updated, supported production model endpoint
-            model = genai.GenerativeModel('gemini-2.5-flash')
+            # Updated to the required gemini-3.6-flash model name
+            model = genai.GenerativeModel('gemini-3.6-flash')
             
             if st.button("Run AI Technical Engine"):
                 with st.spinner("Analyzing market dynamics & generating risk summary..."):
