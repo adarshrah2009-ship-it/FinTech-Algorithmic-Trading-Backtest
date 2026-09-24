@@ -1,6 +1,7 @@
 streamlit
-yfinance
 pandas
-numpy
+yfinance
+arch
+scipy
 plotly
-requests
+fpdf2
