@@ -1,5 +1,8 @@
-import appdirs as ad
-ad.user_cache_dir = lambda *args: "/tmp"
+import os
+import tempfile
+
+# Force yfinance to use the temporary directory for cache using Python built-ins
+os.environ["YFINANCE_CACHE_DIR"] = tempfile.gettempdir()
 
 import streamlit as st
 import yfinance as yf
@@ -52,7 +55,7 @@ ticker = st.sidebar.selectbox(
 horizon = st.sidebar.selectbox("Data Horizon", ["1y", "2y", "5y"], index=1)
 
 # Securely grab key from Streamlit Secrets or prompt visitor for input
-api_key = st.secrets.get("AQ.Ab8RN6JEjmiDrYKPT4UgXDGu6sbVs6WcFfjsXyWSXpZovNEFTQ", "")
+api_key = st.secrets.get("GEMINI_API_KEY", "")
 if not api_key:
     api_key = st.sidebar.text_input(
         "🔑 Enter Gemini API Key", 
