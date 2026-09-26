@@ -2,11 +2,9 @@ import os
 import tempfile
 import requests
 
-# Set cache directory to temp
 os.environ["YFINANCE_CACHE_DIR"] = tempfile.gettempdir()
 
 import streamlit as st
-import yfinance as yf
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
@@ -52,8 +50,9 @@ ticker = st.sidebar.selectbox(
     index=0
 )
 
-horizon_map = {"1y": "1y", "2y": "2y", "5y": "5y"}
-horizon = st.sidebar.selectbox("Data Horizon", ["1y", "2y", "5y"], index=1)
+horizon_map = {"1y": 365, "2y": 730, "5y": 1825}
+horizon_label = st.sidebar.selectbox("Data Horizon", ["1y", "2y", "5y"], index=1)
+days_back = horizon_map[horizon_label]
 
 api_key = st.secrets.get("GEMINI_API_KEY", "")
 if not api_key:
@@ -63,43 +62,50 @@ if not api_key:
         help="Visitors can provide their own key here, or configure GEMINI_API_KEY in Streamlit Secrets."
     )
 
-# Robust data loading function with fallback logic
+# Direct Public API Fetcher (Zero-Block)
 @st.cache_data(ttl=600)
-def load_data(symbol, period):
-    # Method 1: yfinance with explicit browser headers
-    try:
-        session = requests.Session()
-        session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
-        })
-        ticker_obj = yf.Ticker(symbol, session=session)
-        df = ticker_obj.history(period=period)
+def load_data(symbol, days):
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+    }
+
+    # Fetch Crypto via CoinGecko Public API (No rate limiting/blocks)
+    if "BTC" in symbol or "ETH" in symbol:
+        coin_id = "bitcoin" if "BTC" in symbol else "ethereum"
+        url = f"https://api.coingecko.com/api/v3/coins/{coin_id}/market_chart?vs_currency=usd&days={days}&interval=daily"
         
-        if not df.empty:
-            df['Returns'] = df['Close'].pct_change()
-            return df.dropna()
-    except Exception:
-        pass
+        response = requests.get(url, headers=headers, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            prices = data.get("prices", [])
+            
+            df = pd.DataFrame(prices, columns=["Timestamp", "Close"])
+            df["Date"] = pd.to_datetime(df["Timestamp"], unit="ms")
+            df = df.sort_values("Date").set_index("Date")
+            
+            # Synthesize OHLC for candlestick compatibility
+            df["Open"] = df["Close"].shift(1).fillna(df["Close"])
+            df["High"] = df[["Open", "Close"]].max(axis=1) * 1.005
+            df["Low"] = df[["Open", "Close"]].min(axis=1) * 0.995
+            df["Returns"] = df["Close"].pct_change()
+            return df.dropna()[["Open", "High", "Low", "Close", "Returns"]]
 
-    # Method 2: Direct Stooq query with short timeout
-    stooq_symbol = symbol.replace("-USD", "USD").replace("^GSPC", "SPX").replace(".NS", ".IN")
-    stooq_url = f"https://stooq.com/q/d/l/?s={stooq_symbol.lower()}&i=d"
+    # Fallback Fetcher for Stock Equities
+    import yfinance as yf
+    session = requests.Session()
+    session.headers.update(headers)
     
-    try:
-        df_stooq = pd.read_csv(stooq_url, timeout=5)
-        if not df_stooq.empty and 'Date' in df_stooq.columns and 'Close' in df_stooq.columns:
-            df_stooq['Date'] = pd.to_datetime(df_stooq['Date'])
-            df_stooq = df_stooq.sort_values('Date').set_index('Date')
-            df_stooq['Returns'] = df_stooq['Close'].pct_change()
-            return df_stooq.dropna()
-    except Exception:
-        pass
+    ticker_obj = yf.Ticker(symbol, session=session)
+    df = ticker_obj.history(period=f"{days}d")
+    
+    if not df.empty:
+        df["Returns"] = df["Close"].pct_change()
+        return df.dropna()
 
-    raise RuntimeError(f"Unable to fetch market data for {symbol}. Network providers timed out.")
+    raise RuntimeError(f"Unable to load market data for {symbol}.")
 
 try:
-    df = load_data(ticker, horizon)
+    df = load_data(ticker, days_back)
     current_price = float(df['Close'].iloc[-1])
 except Exception as e:
     st.error(f"⚠️ Data Retrieval Error: {e}")
@@ -187,7 +193,7 @@ with tab3:
                         prompt = f"""
                         You are a Chief Risk Officer at an institutional quantitative fund.
                         Target Asset: {ticker}
-                        Horizon: {horizon}
+                        Horizon: {horizon_label}
                         Current Price: {current_price}
                         Recent 10-Day Returns: {recent_returns}
                         
@@ -265,4 +271,3 @@ with tab5:
                 ending_prices = sim_paths[-1]
                 cvar_95 = current_price - np.mean(ending_prices[ending_prices <= np.percentile(ending_prices, 5)])
                 st.warning(f"Estimated 95% CVaR (Expected Tail Loss over {sim_days} days): **${cvar_95:,.2f}** per share.")
-                
