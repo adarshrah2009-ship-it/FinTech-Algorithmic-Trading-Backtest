@@ -1,9 +1,9 @@
 streamlit
+yfinance
 pandas
 numpy
-yfinance
-arch
-scipy
 plotly
-fpdf2
+arch
 google-generativeai
+fpdf
+scipy
