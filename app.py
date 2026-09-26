@@ -1,18 +1,9 @@
-import os
-import tempfile
-import requests
-
-# Force yfinance to use the temporary directory for cache
-os.environ["YFINANCE_CACHE_DIR"] = tempfile.gettempdir()
-
 import streamlit as st
-import yfinance as yf
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 from arch import arch_model
 import google.generativeai as genai
-from fpdf import FPDF
 from scipy.stats import norm
 
 # ==========================================
@@ -47,13 +38,26 @@ st.sidebar.divider()
 # ==========================================
 st.sidebar.header("System Controls")
 
-ticker = st.sidebar.selectbox(
+# Map tickers to Stooq format (Stooq uses .US for US equities/indices)
+ticker_map = {
+    "BTC-USD": "BTC-USD",
+    "ETH-USD": "ETH-USD",
+    "S&P 500 (^GSPC)": "^SPX",
+    "AAPL": "AAPL.US",
+    "NVDA": "NVDA.US",
+    "SUZLON (India)": "SUZLON.IN"
+}
+
+ticker_display = st.sidebar.selectbox(
     "Select Asset Ticker",
-    ["BTC-USD", "ETH-USD", "^GSPC", "SUZLON.NS", "AAPL", "NVDA"],
+    list(ticker_map.keys()),
     index=0
 )
+ticker_symbol = ticker_map[ticker_display]
 
-horizon = st.sidebar.selectbox("Data Horizon", ["1y", "2y", "5y"], index=1)
+horizon_map = {"1y": 365, "2y": 730, "5y": 1825}
+horizon_label = st.sidebar.selectbox("Data Horizon", ["1y", "2y", "5y"], index=1)
+days_back = horizon_map[horizon_label]
 
 # Securely grab key from Streamlit Secrets or prompt visitor for input
 api_key = st.secrets.get("GEMINI_API_KEY", "")
@@ -64,31 +68,36 @@ if not api_key:
         help="Visitors can provide their own key here, or configure GEMINI_API_KEY in Streamlit Secrets."
     )
 
-# Fetch Market Data with Browser Session Headers to prevent AWS AccessDenied
+# Fetch Market Data via Stooq (bypasses Yahoo Finance AWS blocks)
 @st.cache_data(ttl=600)
-def load_data(symbol, period):
-    session = requests.Session()
-    session.headers.update({
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-    })
+def load_data(symbol, days):
+    end_date = pd.Timestamp.now()
+    start_date = end_date - pd.Timedelta(days=days)
     
-    ticker_obj = yf.Ticker(symbol, session=session)
-    df = ticker_obj.history(period=period)
+    # Direct CSV download from Stooq
+    stooq_url = f"https://stooq.com/q/d/l/?s={symbol.lower()}&i=d"
+    df = pd.read_csv(stooq_url)
     
-    if df.empty:
-        df = yf.download(symbol, period=period, progress=False)
-        
-    if isinstance(df.columns, pd.MultiIndex):
-        df = df.xs(symbol, level=1, axis=1)
-        
-    df['Returns'] = df['Close'].pct_change().dropna()
+    if df.empty or 'Date' not in df.columns:
+        # Fallback for Crypto / Alt format
+        clean_sym = symbol.replace("-", "").lower()
+        stooq_url = f"https://stooq.com/q/d/l/?s={clean_sym}&i=d"
+        df = pd.read_csv(stooq_url)
+
+    df['Date'] = pd.to_datetime(df['Date'])
+    df = df.sort_values('Date').reset_index(drop=True)
+    df.set_index('Date', inplace=True)
+    
+    # Filter by selected date range
+    df = df[df.index >= start_date]
+    df['Returns'] = df['Close'].pct_change()
     return df.dropna()
 
 try:
-    df = load_data(ticker, horizon)
+    df = load_data(ticker_symbol, days_back)
     current_price = float(df['Close'].iloc[-1])
 except Exception as e:
-    st.error(f"Error fetching ticker data: {e}")
+    st.error(f"Error fetching ticker data from data provider: {e}")
     st.stop()
 
 # ==========================================
@@ -115,9 +124,9 @@ with tab1:
             x=df.index,
             open=df['Open'], high=df['High'],
             low=df['Low'], close=df['Close'],
-            name=ticker
+            name=ticker_display
         ))
-        fig.update_layout(title=f"{ticker} Price Chart", template="plotly_dark", xaxis_rangeslider_visible=False)
+        fig.update_layout(title=f"{ticker_display} Price Chart", template="plotly_dark", xaxis_rangeslider_visible=False)
         st.plotly_chart(fig, use_container_width=True)
         
     with col2:
@@ -171,8 +180,8 @@ with tab3:
                         recent_returns = df['Returns'].tail(10).values
                         prompt = f"""
                         You are a Chief Risk Officer at an institutional quantitative fund.
-                        Target Asset: {ticker}
-                        Horizon: {horizon}
+                        Target Asset: {ticker_display}
+                        Horizon: {horizon_label}
                         Current Price: {current_price}
                         Recent 10-Day Returns: {recent_returns}
                         
@@ -226,12 +235,10 @@ with tab5:
         
         if st.button("Run Stochastic Engine"):
             with st.spinner("Fitting GARCH(1,1) model and running Geometric Brownian Motion..."):
-                # 1. Fit GARCH(1,1)
                 garch = arch_model(df['Returns'] * 100, vol='Garch', p=1, q=1)
                 res = garch.fit(disp='off')
                 forecast_vol = np.sqrt(res.forecast().variance.iloc[-1, -1]) / 100
                 
-                # 2. Run Monte Carlo
                 dt = 1 / 252
                 daily_drift = (df['Returns'].mean() - 0.5 * (forecast_vol ** 2)) * dt
                 daily_vol = forecast_vol * np.sqrt(dt)
@@ -243,7 +250,6 @@ with tab5:
                     shock = np.random.normal(0, 1, num_sims)
                     sim_paths[t] = sim_paths[t-1] * np.exp(daily_drift + daily_vol * shock)
                 
-                # 3. Plot Paths
                 fig_mc = go.Figure()
                 for i in range(min(num_sims, 100)):
                     fig_mc.add_trace(go.Scatter(y=sim_paths[:, i], mode='lines', line=dict(width=0.5), showlegend=False))
