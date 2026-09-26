@@ -2,10 +2,11 @@ import os
 import tempfile
 import requests
 
-# Set cache path
+# Set cache directory to temp
 os.environ["YFINANCE_CACHE_DIR"] = tempfile.gettempdir()
 
 import streamlit as st
+import yfinance as yf
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
@@ -45,26 +46,14 @@ st.sidebar.divider()
 # ==========================================
 st.sidebar.header("System Controls")
 
-# Mapping tickers for reliable Stooq fetching
-ticker_map = {
-    "BTC-USD": "BTCUSD",
-    "ETH-USD": "ETHUSD",
-    "S&P 500": "SPX",
-    "AAPL": "AAPL.US",
-    "NVDA": "NVDA.US",
-    "SUZLON": "SUZLON.IN"
-}
-
-ticker_display = st.sidebar.selectbox(
+ticker = st.sidebar.selectbox(
     "Select Asset Ticker",
-    list(ticker_map.keys()),
+    ["BTC-USD", "ETH-USD", "^GSPC", "SUZLON.NS", "AAPL", "NVDA"],
     index=0
 )
-ticker_symbol = ticker_map[ticker_display]
 
-horizon_map = {"1y": 365, "2y": 730, "5y": 1825}
-horizon_label = st.sidebar.selectbox("Data Horizon", ["1y", "2y", "5y"], index=1)
-days_back = horizon_map[horizon_label]
+horizon_map = {"1y": "1y", "2y": "2y", "5y": "5y"}
+horizon = st.sidebar.selectbox("Data Horizon", ["1y", "2y", "5y"], index=1)
 
 api_key = st.secrets.get("GEMINI_API_KEY", "")
 if not api_key:
@@ -74,40 +63,43 @@ if not api_key:
         help="Visitors can provide their own key here, or configure GEMINI_API_KEY in Streamlit Secrets."
     )
 
-# Robust data fetching function
+# Robust data loading function with fallback logic
 @st.cache_data(ttl=600)
-def load_data(symbol, days):
-    end_date = pd.Timestamp.now()
-    start_date = end_date - pd.Timedelta(days=days)
-    
-    url = f"https://stooq.com/q/d/l/?s={symbol.lower()}&i=d"
-    
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-    }
-    
-    response = requests.get(url, headers=headers, timeout=10)
-    
-    # Check if response is valid CSV rather than XML/HTML error
-    if response.status_code != 200 or response.text.startswith("<?xml") or response.text.startswith("<Error"):
-        raise ValueError(f"Unable to fetch data for symbol {symbol}. Provider returned invalid response.")
+def load_data(symbol, period):
+    # Method 1: yfinance with explicit browser headers
+    try:
+        session = requests.Session()
+        session.headers.update({
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
+        })
+        ticker_obj = yf.Ticker(symbol, session=session)
+        df = ticker_obj.history(period=period)
         
-    from io import StringIO
-    df = pd.read_csv(StringIO(response.text))
-    
-    if df.empty or 'Date' not in df.columns or 'Close' not in df.columns:
-        raise ValueError(f"No pricing data found for {symbol}.")
+        if not df.empty:
+            df['Returns'] = df['Close'].pct_change()
+            return df.dropna()
+    except Exception:
+        pass
 
-    df['Date'] = pd.to_datetime(df['Date'])
-    df = df.sort_values('Date').reset_index(drop=True)
-    df.set_index('Date', inplace=True)
+    # Method 2: Direct Stooq query with short timeout
+    stooq_symbol = symbol.replace("-USD", "USD").replace("^GSPC", "SPX").replace(".NS", ".IN")
+    stooq_url = f"https://stooq.com/q/d/l/?s={stooq_symbol.lower()}&i=d"
     
-    df = df[df.index >= start_date]
-    df['Returns'] = df['Close'].pct_change()
-    return df.dropna()
+    try:
+        df_stooq = pd.read_csv(stooq_url, timeout=5)
+        if not df_stooq.empty and 'Date' in df_stooq.columns and 'Close' in df_stooq.columns:
+            df_stooq['Date'] = pd.to_datetime(df_stooq['Date'])
+            df_stooq = df_stooq.sort_values('Date').set_index('Date')
+            df_stooq['Returns'] = df_stooq['Close'].pct_change()
+            return df_stooq.dropna()
+    except Exception:
+        pass
+
+    raise RuntimeError(f"Unable to fetch market data for {symbol}. Network providers timed out.")
 
 try:
-    df = load_data(ticker_symbol, days_back)
+    df = load_data(ticker, horizon)
     current_price = float(df['Close'].iloc[-1])
 except Exception as e:
     st.error(f"⚠️ Data Retrieval Error: {e}")
@@ -138,9 +130,9 @@ with tab1:
             x=df.index,
             open=df['Open'], high=df['High'],
             low=df['Low'], close=df['Close'],
-            name=ticker_display
+            name=ticker
         ))
-        fig.update_layout(title=f"{ticker_display} Price Chart", template="plotly_dark", xaxis_rangeslider_visible=False)
+        fig.update_layout(title=f"{ticker} Price Chart", template="plotly_dark", xaxis_rangeslider_visible=False)
         st.plotly_chart(fig, use_container_width=True)
         
     with col2:
@@ -194,8 +186,8 @@ with tab3:
                         recent_returns = df['Returns'].tail(10).values
                         prompt = f"""
                         You are a Chief Risk Officer at an institutional quantitative fund.
-                        Target Asset: {ticker_display}
-                        Horizon: {horizon_label}
+                        Target Asset: {ticker}
+                        Horizon: {horizon}
                         Current Price: {current_price}
                         Recent 10-Day Returns: {recent_returns}
                         
@@ -273,3 +265,4 @@ with tab5:
                 ending_prices = sim_paths[-1]
                 cvar_95 = current_price - np.mean(ending_prices[ending_prices <= np.percentile(ending_prices, 5)])
                 st.warning(f"Estimated 95% CVaR (Expected Tail Loss over {sim_days} days): **${cvar_95:,.2f}** per share.")
+                
