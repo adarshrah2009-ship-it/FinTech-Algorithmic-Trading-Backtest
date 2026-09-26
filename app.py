@@ -1,3 +1,10 @@
+import os
+import tempfile
+import requests
+
+# Set cache path
+os.environ["YFINANCE_CACHE_DIR"] = tempfile.gettempdir()
+
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -38,14 +45,14 @@ st.sidebar.divider()
 # ==========================================
 st.sidebar.header("System Controls")
 
-# Map tickers to Stooq format (Stooq uses .US for US equities/indices)
+# Mapping tickers for reliable Stooq fetching
 ticker_map = {
-    "BTC-USD": "BTC-USD",
-    "ETH-USD": "ETH-USD",
-    "S&P 500 (^GSPC)": "^SPX",
+    "BTC-USD": "BTCUSD",
+    "ETH-USD": "ETHUSD",
+    "S&P 500": "SPX",
     "AAPL": "AAPL.US",
     "NVDA": "NVDA.US",
-    "SUZLON (India)": "SUZLON.IN"
+    "SUZLON": "SUZLON.IN"
 }
 
 ticker_display = st.sidebar.selectbox(
@@ -59,7 +66,6 @@ horizon_map = {"1y": 365, "2y": 730, "5y": 1825}
 horizon_label = st.sidebar.selectbox("Data Horizon", ["1y", "2y", "5y"], index=1)
 days_back = horizon_map[horizon_label]
 
-# Securely grab key from Streamlit Secrets or prompt visitor for input
 api_key = st.secrets.get("GEMINI_API_KEY", "")
 if not api_key:
     api_key = st.sidebar.text_input(
@@ -68,27 +74,34 @@ if not api_key:
         help="Visitors can provide their own key here, or configure GEMINI_API_KEY in Streamlit Secrets."
     )
 
-# Fetch Market Data via Stooq (bypasses Yahoo Finance AWS blocks)
+# Robust data fetching function
 @st.cache_data(ttl=600)
 def load_data(symbol, days):
     end_date = pd.Timestamp.now()
     start_date = end_date - pd.Timedelta(days=days)
     
-    # Direct CSV download from Stooq
-    stooq_url = f"https://stooq.com/q/d/l/?s={symbol.lower()}&i=d"
-    df = pd.read_csv(stooq_url)
+    url = f"https://stooq.com/q/d/l/?s={symbol.lower()}&i=d"
     
-    if df.empty or 'Date' not in df.columns:
-        # Fallback for Crypto / Alt format
-        clean_sym = symbol.replace("-", "").lower()
-        stooq_url = f"https://stooq.com/q/d/l/?s={clean_sym}&i=d"
-        df = pd.read_csv(stooq_url)
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    }
+    
+    response = requests.get(url, headers=headers, timeout=10)
+    
+    # Check if response is valid CSV rather than XML/HTML error
+    if response.status_code != 200 or response.text.startswith("<?xml") or response.text.startswith("<Error"):
+        raise ValueError(f"Unable to fetch data for symbol {symbol}. Provider returned invalid response.")
+        
+    from io import StringIO
+    df = pd.read_csv(StringIO(response.text))
+    
+    if df.empty or 'Date' not in df.columns or 'Close' not in df.columns:
+        raise ValueError(f"No pricing data found for {symbol}.")
 
     df['Date'] = pd.to_datetime(df['Date'])
     df = df.sort_values('Date').reset_index(drop=True)
     df.set_index('Date', inplace=True)
     
-    # Filter by selected date range
     df = df[df.index >= start_date]
     df['Returns'] = df['Close'].pct_change()
     return df.dropna()
@@ -97,7 +110,8 @@ try:
     df = load_data(ticker_symbol, days_back)
     current_price = float(df['Close'].iloc[-1])
 except Exception as e:
-    st.error(f"Error fetching ticker data from data provider: {e}")
+    st.error(f"⚠️ Data Retrieval Error: {e}")
+    st.info("Tip: Try switching the asset ticker or selecting a different horizon.")
     st.stop()
 
 # ==========================================
