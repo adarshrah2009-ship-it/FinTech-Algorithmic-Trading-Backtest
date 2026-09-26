@@ -22,7 +22,6 @@ st.title("Institutional Quant & AI Terminal")
 # ==========================================
 # 2. PAYWALL & SUBSCRIPTION LOCK SYSTEM
 # ==========================================
-# Reads URL parameters to check access level
 query_params = st.query_params
 is_pro_user = query_params.get("status") == "pro"
 
@@ -32,7 +31,6 @@ if is_pro_user:
     st.sidebar.success("Pro Tier Active! 🔥")
 else:
     st.sidebar.warning("Free Version")
-    # REPLACE THE LINK BELOW WITH YOUR REAL STRIPE / LEMON SQUEEZY LINK LATER
     st.sidebar.markdown("[👉 Upgrade to Pro Access](https://buy.stripe.com/your_checkout_link)")
 
 st.sidebar.divider()
@@ -50,10 +48,14 @@ ticker = st.sidebar.selectbox(
 
 horizon = st.sidebar.selectbox("Data Horizon", ["1y", "2y", "5y"], index=1)
 
-# Securely grab key from Streamlit Secrets or sidebar text input
-api_key = st.secrets.get("GEMINI_API_KEY", "")
+# Securely grab key from Streamlit Secrets or prompt visitor for input
+api_key = st.secrets.get("AQ.Ab8RN6JEjmiDrYKPT4UgXDGu6sbVs6WcFfjsXyWSXpZovNEFTQ", "")
 if not api_key:
-    api_key = st.sidebar.text_input("🔑 Gemini API Key", type="password", help="Enter API Key or set in Streamlit Secrets.")
+    api_key = st.sidebar.text_input(
+        "🔑 Enter Gemini API Key", 
+        type="password", 
+        help="Visitors can provide their own key here, or configure GEMINI_API_KEY in Streamlit Secrets."
+    )
 
 # Fetch Market Data
 @st.cache_data(ttl=600)
@@ -140,11 +142,11 @@ with tab3:
         st.error("🔒 This feature is locked! Please upgrade to Pro in the sidebar to access the AI Chief Risk Officer.")
     else:
         if not api_key:
-            st.warning("⚠️ Please configure your GEMINI_API_KEY in Streamlit Secrets or enter it in the sidebar.")
+            st.warning("⚠️ Please configure your GEMINI_API_KEY in Streamlit Secrets or enter your key in the sidebar.")
         else:
             try:
                 genai.configure(api_key=api_key)
-                model = genai.GenerativeModel('gemini-3.6-flash')
+                model = genai.GenerativeModel('gemini-2.5-flash')
                 
                 if st.button("Run AI Technical Engine"):
                     with st.spinner("Analyzing market dynamics & generating risk summary..."):
