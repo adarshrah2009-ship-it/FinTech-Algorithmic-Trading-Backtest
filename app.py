@@ -1,7 +1,8 @@
 import os
 import tempfile
+import requests
 
-# Force yfinance to use the temporary directory for cache using Python built-ins
+# Force yfinance to use the temporary directory for cache
 os.environ["YFINANCE_CACHE_DIR"] = tempfile.gettempdir()
 
 import streamlit as st
@@ -63,12 +64,23 @@ if not api_key:
         help="Visitors can provide their own key here, or configure GEMINI_API_KEY in Streamlit Secrets."
     )
 
-# Fetch Market Data
+# Fetch Market Data with Browser Session Headers to prevent AWS AccessDenied
 @st.cache_data(ttl=600)
 def load_data(symbol, period):
-    df = yf.download(symbol, period=period, progress=False)
+    session = requests.Session()
+    session.headers.update({
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    })
+    
+    ticker_obj = yf.Ticker(symbol, session=session)
+    df = ticker_obj.history(period=period)
+    
+    if df.empty:
+        df = yf.download(symbol, period=period, progress=False)
+        
     if isinstance(df.columns, pd.MultiIndex):
         df = df.xs(symbol, level=1, axis=1)
+        
     df['Returns'] = df['Close'].pct_change().dropna()
     return df.dropna()
 
